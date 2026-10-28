@@ -28,6 +28,8 @@ The independent fictional-examiner diagnostic uses a separate prompt and schema:
 
 Both schemas require a non-empty reply up to 600 characters and forbid additional properties. The examiner scenario contains no real patient information and requests no medical diagnosis.
 
+For the pinned Qwen3.5 checkpoint, the model-specific `chat_template_kwargs: {"enable_thinking": false}` option is required for these short completion budgets. With reasoning enabled, the model used the full 180-token budget for reasoning, returned no content and ended with `finish_reason: "length"`; consumers must reject that response. Do not generalize this template option to unrelated models.
+
 ## Privacy and logging
 
 Record only case name, API model alias, success/failure category, elapsed time, request count, and exception class. Do not log prompts, completion bodies, capabilities, credentials, or full HTTP error bodies. The vLLM endpoint is unauthenticated by design and therefore must remain on a trusted private Docker network with no host-published port.

@@ -38,6 +38,12 @@ def test_compose_keeps_the_model_api_off_host_and_on_the_private_alias():
     assert "--enable-per-request-metrics" in service["command"]
 
 
+def test_compose_healthcheck_uses_the_python_executable_in_the_vllm_image():
+    service = read_compose()["services"]["vllm"]
+
+    assert service["healthcheck"]["test"][:3] == ["CMD", "python3", "-c"]
+
+
 def test_compose_reserves_the_gpu_and_mounts_only_an_external_model_cache():
     service = read_compose()["services"]["vllm"]
 

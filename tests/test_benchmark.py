@@ -68,3 +68,49 @@ def test_percentile_uses_nearest_rank_and_handles_empty_inputs():
     assert benchmark.percentile([5.0, 1.0, 3.0], 50) == 3.0
     assert benchmark.percentile([5.0, 1.0, 3.0], 95) == 5.0
     assert benchmark.percentile([], 95) is None
+
+
+def test_cli_can_disable_model_reasoning_for_warmup_and_benchmark_batches(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run_case(
+        base_url,
+        model,
+        case,
+        timeout,
+        disable_thinking=False,
+        max_tokens=180,
+        max_retries=2,
+    ):
+        calls.append(disable_thinking)
+        return {
+            "case": case,
+            "model": model,
+            "ok": True,
+            "elapsed_seconds": 0.1,
+            "completion_tokens": 5,
+            "queue_time_ms": 1.0,
+            "time_to_first_token_ms": 50.0,
+            "tokens_per_second": 50.0,
+        }
+
+    monkeypatch.setattr(benchmark, "run_case", fake_run_case)
+    output = tmp_path / "metrics.jsonl"
+
+    result = benchmark.main(
+        [
+            "--disable-thinking",
+            "--warmup-per-case",
+            "1",
+            "--concurrency",
+            "1",
+            "--requests-per-concurrency",
+            "1",
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert result == 0
+    assert calls and all(calls)
+    assert output.exists()

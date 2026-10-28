@@ -34,17 +34,17 @@ Run the independent contract client from a throwaway container on the shared net
 ```powershell
 $scripts = (Resolve-Path .\scripts).Path
 docker run --rm --network ddu_inference_bus --mount "type=bind,source=$scripts,target=/app,readonly" python:3.11-slim python /app/check_server.py --base-url http://ddu-llm:8080 --model ddu-narrator
-docker run --rm --network ddu_inference_bus --mount "type=bind,source=$scripts,target=/app,readonly" python:3.11-slim python /app/shared_inference_smoke.py --base-url http://ddu-llm:8080 --model ddu-narrator --concurrent
+docker run --rm --network ddu_inference_bus --mount "type=bind,source=$scripts,target=/app,readonly" python:3.11-slim python /app/shared_inference_smoke.py --base-url http://ddu-llm:8080 --model ddu-narrator --disable-thinking --concurrent
 ```
 
 For a bounded concurrency profile, save sanitized JSONL outside the source tree:
 
 ```powershell
 $results = (New-Item -ItemType Directory -Force .\benchmark-output).FullName
-docker run --rm --network ddu_inference_bus --mount "type=bind,source=$scripts,target=/app,readonly" --mount "type=bind,source=$results,target=/results" python:3.11-slim python /app/benchmark.py --base-url http://ddu-llm:8080 --model ddu-narrator --concurrency 1 2 4 --requests-per-concurrency 20 --output /results/rtx3060.jsonl
+docker run --rm --network ddu_inference_bus --mount "type=bind,source=$scripts,target=/app,readonly" --mount "type=bind,source=$results,target=/results" python:3.11-slim python /app/benchmark.py --base-url http://ddu-llm:8080 --model ddu-narrator --disable-thinking --concurrency 1 2 4 --requests-per-concurrency 20 --output /results/rtx3060.jsonl
 ```
 
-These clients check HTTP readiness, the served alias, strict synthetic history/examiner schemas, and completion finish reasons. They print sanitized results and never print prompts, model output, or tokens. Host acceptance and measured results are recorded in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+These clients check HTTP readiness, the served alias, strict synthetic history/examiner schemas, and completion finish reasons. `--disable-thinking` applies the verified Qwen3.5 chat-template option; without it, reasoning can consume the token budget and produce an empty response. The option is model-specific. Clients print sanitized results and never print prompts, model output, or tokens. Host acceptance and measured results are recorded in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 Run CPU-only tests and configuration checks without this service:
 

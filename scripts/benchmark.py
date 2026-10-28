@@ -154,6 +154,7 @@ def _run_batch(
     max_tokens: int,
     timeout: float,
     max_retries: int,
+    disable_thinking: bool,
 ) -> tuple[list[dict], dict]:
     def execute(case: str, submitted_at: float) -> dict:
         dispatch_at = time.monotonic()
@@ -162,6 +163,7 @@ def _run_batch(
             model,
             case,
             timeout,
+            disable_thinking=disable_thinking,
             max_tokens=max_tokens,
             max_retries=max_retries,
         )
@@ -193,6 +195,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=128)
     parser.add_argument("--timeout", type=positive_number, default=120.0)
     parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument(
+        "--disable-thinking",
+        action="store_true",
+        help="disable model reasoning during probes (Qwen3.5 template-specific)",
+    )
     parser.add_argument("--output", type=Path, default=Path("benchmark-results.jsonl"))
     args = parser.parse_args(argv)
     if not 1 <= args.context_length <= 262144:
@@ -215,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.model,
                 case,
                 args.timeout,
+                disable_thinking=args.disable_thinking,
                 max_tokens=args.max_tokens,
                 max_retries=args.max_retries,
             )
@@ -236,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             args.max_tokens,
             args.timeout,
             args.max_retries,
+            args.disable_thinking,
         )
         records.extend(batch_records)
         records.append(summary)
