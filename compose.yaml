@@ -1,0 +1,58 @@
+name: local-ai-api-lite
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+    command:
+      - "${MODEL_ID:?Set MODEL_ID in .env}"
+      - --revision
+      - "${MODEL_REVISION:?Set MODEL_REVISION in .env}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --served-model-name
+      - "${MODEL_ALIAS:-ddu-narrator}"
+      - --language-model-only
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-4096}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-2}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.75}"
+      - --reasoning-parser
+      - "${REASONING_PARSER:-qwen3}"
+      - --enable-per-request-metrics
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_CACHE: /root/.cache/huggingface/hub
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_LOGGING_LEVEL: INFO
+    volumes:
+      - >-
+        ${HF_CACHE_DIR:?set HF_CACHE_DIR}:/root/.cache/huggingface
+    gpus: all
+    shm_size: "4gb"
+    restart: unless-stopped
+    stop_grace_period: 2m
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import urllib.request; urllib.request.urlopen(
+          'http://127.0.0.1:8080/health', timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
+    networks:
+      inference:
+        aliases:
+          - ddu-llm
+
+networks:
+  inference:
+    name: ddu_inference_bus
+    external: true
