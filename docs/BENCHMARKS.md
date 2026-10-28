@@ -35,12 +35,16 @@ Run `scripts/benchmark.py` from a trusted client attached to `ddu_inference_bus`
 
 The companion M1.5 validation used llama.cpp with Qwen3.5-4B Q4_K_M GGUF. It reached model health in about 20.48 seconds, passed two synthetic workload probes, sampled 4,307 MiB of device-wide GPU memory, and remained available after the history backend stopped. These are historical llama.cpp observations only; they are not vLLM measurements or performance targets.
 
+## Lifecycle evidence (2026-10-28)
+
+The companion backend was stopped while the vLLM service stayed healthy and both independent synthetic inference workloads succeeded. The vLLM service was then stopped with the backend running: `/healthz` and database-backed `/readyz` remained healthy, `/api/v1/status` reported degraded inference, and the M2 fake-turn/replay smoke passed. Restarting vLLM restored ready status without restarting the backend.
+
 ## Required host checks
 
 - [x] `/health` returns HTTP 200 and `/v1/models` contains `ddu-narrator`.
 - [x] Danish history and fictional examiner structured outputs both pass schema and `finish_reason == "stop"` checks.
 - [x] Sequential and simultaneous client calls succeed with one resident model.
 - [x] Concurrency 1, 2, and 4 is measured without OOM; queue wait, success rate, p50/p95, and output tokens/s are recorded.
-- [ ] Inference remains available when the backend stops; backend readiness and M2 fake turn remain available when inference stops.
-- [ ] Restart restores model readiness without restarting the backend.
+- [x] Inference remains available when the backend stops; backend readiness and M2 fake turn remain available when inference stops.
+- [x] Restart restores model readiness without restarting the backend.
 - [x] Container inspection confirms no published inference port and the expected single `ddu-llm` alias owner.
