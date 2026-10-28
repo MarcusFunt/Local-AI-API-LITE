@@ -47,4 +47,5 @@ The companion backend was stopped while the vLLM service stayed healthy and both
 - [x] Concurrency 1, 2, and 4 is measured without OOM; queue wait, success rate, p50/p95, and output tokens/s are recorded.
 - [x] Inference remains available when the backend stops; backend readiness and M2 fake turn remain available when inference stops.
 - [x] Restart restores model readiness without restarting the backend.
+- [x] Rollback to the original pinned llama.cpp image and verified GGUF succeeds, then vLLM recovers, with the backend database volume unchanged and no alias/host-port conflict.
 - [x] Container inspection confirms no published inference port and the expected single `ddu-llm` alias owner.

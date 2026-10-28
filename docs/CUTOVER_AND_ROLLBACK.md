@@ -30,3 +30,11 @@ Rollback if the model cannot load on the RTX 3060, the structured response contr
 3. Start the previously recorded llama.cpp Compose project using its original pinned model/image and environment.
 4. Rerun its previous smoke check and the history client probe.
 5. Leave the database/backend project and its volume untouched. Record the failure and revise the vLLM candidate before trying again.
+
+## Rollback drill (2026-10-28)
+
+The rollback was exercised on the RTX 3060 host against the stopped, isolated `ddu-migration-smoke` backend and its existing PostgreSQL volume. The original llama.cpp image `ghcr.io/ggml-org/llama.cpp@sha256:d87b02aafa74797a2d599b281c50468704bd0bcdc57bfcf31b570d593f1d285b` and `Qwen3.5-4B-Q4_K_M.gguf` were used; the GGUF SHA-256 matched the archived M1.5 record (`00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4`). The historical Compose file is recoverable from the companion repository's Git history at commit `5dc7d56` (`deployment/inference/compose.yaml`); it is not part of the active deployment.
+
+The vLLM service was stopped, the old service claimed `ddu-llm` with no host port mapping, and the backend was started using its existing volume `ddu-migration-smoke_pgdata`. `/healthz` and database-backed `/readyz` returned healthy, `/api/v1/status` reported inference ready, and the app-owned Danish schema probe passed. The M2 fake-turn/replay smoke passed against that same database volume. Stopping llama.cpp left the backend ready and inference degraded; the fake-turn/replay smoke still passed. vLLM was restarted on the same alias, the backend reported recovery without a restart, and the Danish probe plus fake-turn/replay smoke passed again. The PostgreSQL volume name was unchanged throughout; no reset or volume removal was run.
+
+The vLLM service was left running healthy. The isolated backend project was stopped while retaining its test volume.
