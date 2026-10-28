@@ -5,7 +5,6 @@ from pathlib import Path
 
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,6 +35,7 @@ def test_compose_keeps_the_model_api_off_host_and_on_the_private_alias():
     }
     assert "--port" in service["command"]
     assert "8080" in service["command"]
+    assert "--enable-per-request-metrics" in service["command"]
 
 
 def test_compose_reserves_the_gpu_and_mounts_only_an_external_model_cache():
@@ -69,3 +69,29 @@ def test_deployment_docs_explain_the_alias_health_semantics_and_rollback():
     assert "ddu_inference_bus" in deployment
     assert "health" in contract and "200" in contract
     assert "rollback" in deployment
+
+
+def test_local_markdown_links_resolve():
+    markdown = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
+    link_pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+    for document in markdown:
+        for destination in link_pattern.findall(document.read_text(encoding="utf-8")):
+            if destination.startswith(("https://", "http://", "mailto:", "#")):
+                continue
+            target = destination.split("#", 1)[0]
+            if target:
+                assert (document.parent / target).exists(), f"broken link in {document.name}: {destination}"
+
+
+def test_ci_runs_mock_tests_lints_compose_validation_and_secret_scanning():
+    workflow = ROOT / ".github/workflows/ci.yml"
+    assert workflow.exists()
+    content = workflow.read_text(encoding="utf-8")
+
+    assert "python -m pytest -q" in content
+    assert "ruff check scripts tests" in content
+    assert "yamllint" in content
+    assert "shellcheck" in content
+    assert "docker compose config --quiet" in content
+    assert "gitleaks/gitleaks-action@v3" in content

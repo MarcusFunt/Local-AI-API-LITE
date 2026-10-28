@@ -22,13 +22,15 @@ services:
       - "${GPU_MEMORY_UTILIZATION:-0.75}"
       - --reasoning-parser
       - "${REASONING_PARSER:-qwen3}"
+      - --enable-per-request-metrics
     environment:
       HF_HOME: /root/.cache/huggingface
       HF_HUB_CACHE: /root/.cache/huggingface/hub
       HF_HUB_DISABLE_TELEMETRY: "1"
       VLLM_LOGGING_LEVEL: INFO
     volumes:
-      - "${HF_CACHE_DIR:?Set HF_CACHE_DIR to a persistent path outside this repository}:/root/.cache/huggingface"
+      - >-
+        ${HF_CACHE_DIR:?set HF_CACHE_DIR}:/root/.cache/huggingface
     gpus: all
     shm_size: "4gb"
     restart: unless-stopped
@@ -38,7 +40,9 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"
+        - >-
+          import urllib.request; urllib.request.urlopen(
+          'http://127.0.0.1:8080/health', timeout=5)
       interval: 30s
       timeout: 10s
       retries: 5

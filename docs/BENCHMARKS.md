@@ -19,7 +19,11 @@
 | 4096 context, 2 sequences | Pending | Pending | Pending | Pending | Pending | Pending | Not yet run |
 | 8192 context, 4 sequences | Pending | Pending | Pending | Pending | Pending | Pending | Not yet run |
 
-Run `scripts/benchmark.py` from a trusted client attached to `ddu_inference_bus`; it writes only sanitized per-request metrics. Record actual host output here after the vLLM model is loaded. Do not infer vLLM performance from the historical llama.cpp results in M1.5.
+Run `scripts/benchmark.py` from a trusted client attached to `ddu_inference_bus`; it writes only sanitized per-request metrics. The script records total latency, client dispatch delay, server queue time, time-to-first-token, output-token counts/rate, retry counts, and success rate. Record actual host output here after the vLLM model is loaded. Do not infer vLLM performance from the historical llama.cpp results in M1.5.
+
+## Historical llama.cpp reference
+
+The companion M1.5 validation used llama.cpp with Qwen3.5-4B Q4_K_M GGUF. It reached model health in about 20.48 seconds, passed two synthetic workload probes, sampled 4,307 MiB of device-wide GPU memory, and remained available after the history backend stopped. These are historical llama.cpp observations only; they are not vLLM measurements or performance targets.
 
 ## Required host checks
 

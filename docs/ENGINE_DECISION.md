@@ -6,7 +6,7 @@ V1 uses the official `vllm/vllm-openai` CUDA image at release `v0.32.0`, pinned 
 
 The first checkpoint candidate is `RedHatAI/Qwen3.5-4B-quantized.w4a16`, pinned to Hub revision `7a613872f394578b0b52b683ff4ac47516b4bcaf`. The [model card](https://huggingface.co/RedHatAI/Qwen3.5-4B-quantized.w4a16) identifies Apache-2.0 licensing, W4A16 weights, and a published 5.2 GB checkpoint size. Runtime VRAM usage is higher than the file size. vLLM's [quantization documentation](https://docs.vllm.ai/en/stable/features/quantization/) lists Ampere support for the relevant 4-bit serving implementations.
 
-The initial launch uses `--language-model-only`, 4096 context, two sequences, 0.75 GPU memory utilization, and the Qwen3 reasoning parser. These are candidate runtime settings; successful CLI parsing does not prove model correctness or fit. The actual RTX 3060 load and schema outputs are recorded in [BENCHMARKS.md](BENCHMARKS.md).
+The initial launch uses `--language-model-only`, 4096 context, two sequences, 0.75 GPU memory utilization, the Qwen3 reasoning parser, and vLLM per-request timing metrics. The metrics flag provides queue time, time-to-first-token, and token-rate measurements; it has some CPU overhead and remains part of the recorded test configuration. See the [vLLM per-request metrics guide](https://docs.vllm.ai/en/v0.32.0/features/per_request_metrics/). These are candidate runtime settings; successful CLI parsing does not prove model correctness or fit. The actual RTX 3060 load and schema outputs are recorded in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Alternatives and limits
 

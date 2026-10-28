@@ -12,6 +12,7 @@ htmlcov/
 *.py[cod]
 *.log
 benchmark-results*.jsonl
+benchmark-output/
 .cache/
 model-cache/
 hf-cache/
