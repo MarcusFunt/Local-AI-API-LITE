@@ -12,6 +12,18 @@ class MetadataStoreError(RuntimeError):
     """A sanitized metadata-storage failure safe to report to API callers."""
 
 
+JOB_SCHEMA = [
+    (
+        "CREATE TABLE dashboard_jobs ("
+        "job_id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL, "
+        "created_at REAL NOT NULL, started_at REAL, completed_at REAL, "
+        "options_json TEXT NOT NULL, summary_json TEXT NOT NULL DEFAULT '{}', "
+        "error_category TEXT, artifact_id TEXT, exit_code INTEGER)"
+    ),
+    "CREATE INDEX dashboard_jobs_recent ON dashboard_jobs (created_at DESC, job_id)",
+]
+
+
 class MetadataStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
