@@ -1,60 +1,104 @@
 # Local dashboard
 
-The Phase 1 dashboard is a local, read-only status page for the existing Local-AI-API-LITE inference service. It shows the container health state, observed model profile, host and device telemetry, and a short in-browser sample history. It does not start, stop, restart, or reconfigure inference.
+The dashboard is a local status and administration UI for Local-AI-API-LITE. The current phase provides authenticated read-only inference status, profile display, host telemetry, and local administrator/session settings. It does not start, stop, restart, or reconfigure inference.
 
-## Run locally on Windows
+## Requirements
 
-Requirements: Python 3.11+, Node.js 20.19+ (or 22.12+), Docker Desktop with the existing `local-ai-api-lite` Compose project visible to the current Windows user, and an optional NVIDIA driver/NVML installation for GPU metrics.
+Use Python 3.11 or newer and Node.js 22.12 or newer. Docker Desktop must be visible to the same Windows user who runs the controller. NVIDIA driver/NVML support is optional; unavailable telemetry is reported as unavailable, never as zero.
 
-Build the static frontend:
+## Install for the current Windows user
+
+From the repository root, run:
+
+```powershell
+.\dashboard\scripts\install_dashboard.ps1
+```
+
+The installer builds the frontend, creates `dashboard/backend/.venv`, installs the dashboard runtime, and registers and starts a current-user Scheduled Task named `Local-AI-API-LITE Dashboard Controller`. The task has an interactive sign-in trigger, limited run level, and three restart attempts at one-minute intervals. Its only application command runs Uvicorn at `127.0.0.1:8765`. It does not run Compose, start inference, or change Docker Desktop settings. It runs in the interactive Windows account that can access Docker Desktop, not as a machine-wide service, and is unavailable before that user signs in.
+
+On first installation, the script prints the one-time setup token to the local installation console. Open <http://127.0.0.1:8765>, submit the token, and choose a permanent administrator password. The token expires after 30 minutes, is single-use, and is stored only as a digest. Re-running the installer after an administrator is configured does not issue a setup token.
+
+Remove the current user's task and its controller process without deleting runtime data:
+
+```powershell
+.\dashboard\scripts\uninstall_dashboard.ps1
+```
+
+Uninstall does not remove metadata or vault files and does not stop or modify inference containers, volumes, or networks.
+
+## Run manually
+
+The controller can be started in a terminal without installing a Scheduled Task:
 
 ```powershell
 Push-Location .\dashboard\frontend
 npm ci
 npm run build
 Pop-Location
-```
-
-Install and run the controller from its directory so Python can import the `app` package:
-
-```powershell
 Push-Location .\dashboard\backend
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev,gpu]"
+.\.venv\Scripts\python.exe -m pip install -e ".[gpu]"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8765
 ```
 
-Open <http://127.0.0.1:8765>. The controller binds to loopback. Its Docker integration issues only fixed `docker ps`, `docker inspect`, and `docker stats --no-stream` queries. It does not mount a Docker socket or run Compose mutations. The model endpoint remains private on `ddu_inference_bus`.
+Run Python module commands from `dashboard/backend` so Python can import the `app` package. For frontend development, run `npm run dev` from `dashboard/frontend`; Vite proxies the local API to port 8765. The production frontend is served from `dashboard/frontend/dist`.
 
-For frontend development, keep the controller running in one terminal, then run `npm run dev` from `dashboard/frontend`; Vite serves the UI on loopback and proxies `/api` to port 8765. The backend serves the production build from `dashboard/frontend/dist` after `npm run build`.
+## Administrator setup and recovery
 
-Install the optional `gpu` extra for NVML metrics. If NVML or the NVIDIA driver is unavailable, GPU readings display as unavailable; they are never represented as zero. VRAM readings are device-wide and include Windows display and other GPU processes. If Docker is not reachable, inference state is unknown rather than stopped. A successful Docker query with no matching container means stopped.
+To issue a replacement initial setup token, or recover a configured administrator, run one of these commands from `dashboard/backend` as the same Windows account. The token appears only in the local terminal; do not copy it into chat, logs, screenshots, tickets, or source control.
 
-## Read-only API
+```powershell
+.\.venv\Scripts\python.exe -m app.bootstrap issue-token
+.\.venv\Scripts\python.exe -m app.bootstrap recover-admin
+```
 
-- `GET /api/control/v1/controller/health` reports controller health without consulting inference.
-- `GET /api/control/v1/status` returns inference state, the observed runtime configuration, host/container metrics, and separate timestamps for the latest Docker health probe and latest successful probe.
-- `GET /api/control/v1/telemetry` returns current host and GPU metrics.
-- `GET /api/control/v1/profiles` returns the two host-tested profiles in `dashboard/config/profiles.yaml`.
+`issue-token` is valid only before initial setup. It invalidates any earlier unused setup token. `recover-admin` revokes active dashboard sessions, invalidates any earlier recovery token, and prints a new one-use token that expires after 30 minutes. Recovery changes the password only after the token is submitted through the local UI and does not delete vault values.
 
-No mutation, database, benchmark, or log routes are present in this phase. Profile cards describe validated settings but cannot apply them. The page polls every five seconds while visible, backs off to thirty seconds while hidden, and keeps at most 120 telemetry samples in browser memory. It stores no metrics or model data on disk.
+Dashboard sessions last eight hours and use a server-managed HttpOnly cookie. The browser keeps its CSRF value only in memory, so reloading the page requires signing in again. Sign-out, password change, session revocation, and recovery revoke server-side sessions as appropriate. Dashboard authentication is separate from Windows and Docker Desktop authentication.
+
+## Local data and security boundary
+
+On Windows, runtime metadata lives under `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\metadata.sqlite3`. The containing directory is restricted to the current Windows user. Encrypted vault values are stored separately from descriptive metadata. The random vault root key is protected with Windows DPAPI CurrentUser and belongs at `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\vault\root-key.dpapi`; it is never stored in plaintext. If the current user's Windows profile or DPAPI key is unavailable, the vault is locked and does not fall back to plaintext. The installer does not create or delete vault data.
+
+The Scheduled Task runs only in the Docker Desktop user's interactive session, with limited privileges. The controller binds to loopback and performs fixed Docker status queries. It does not mount a Docker socket or accept arbitrary commands. The model endpoint remains private on `ddu_inference_bus` with no published host port. Inference controls stay unavailable until a later phase validates an operator-configured stable Compose root.
+
+## Authenticated read-only API
+
+- `GET /api/control/v1/controller/health` is minimal controller liveness and does not consult inference.
+- `GET /auth/state` reports whether one-time setup is required and whether the browser's HttpOnly cookie has an active session.
+- `GET /api/control/v1/status` requires an administrator session and returns cached inference state, the observed runtime configuration, telemetry, and snapshot freshness/error metadata.
+- `GET /api/control/v1/telemetry` and `GET /api/control/v1/profiles` require an administrator session.
+
+The status handler reads from memory immediately while a single bounded worker refreshes Docker status and host telemetry. A successful Docker query with no matching container is `Stopped`; a failed query is `Unknown/Unavailable`. The UI polls every five seconds while visible, backs off to thirty seconds while hidden, allows one in-flight status request, and keeps up to 120 samples in browser memory. It does not write metrics or model data to disk.
+
+No inference mutation, database monitoring, benchmark, or log routes are enabled at this stage. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
 
 ## Checks
 
 From the repository root:
 
 ```powershell
-Push-Location .\dashboard\backend
-.\.venv\Scripts\python.exe -m pytest ..\..\tests -q
-.\.venv\Scripts\python.exe -m pytest .\tests -q
-.\.venv\Scripts\ruff.exe check .\app .\tests
-Pop-Location
+.\dashboard\backend\.venv\Scripts\python.exe -m pytest -q
+.\dashboard\backend\.venv\Scripts\python.exe -m ruff check scripts tests dashboard\backend\app dashboard\backend\tests
+npm --prefix .\dashboard\frontend ci
 npm --prefix .\dashboard\frontend test
 npm --prefix .\dashboard\frontend run build
 docker compose --env-file .env.example config --quiet
 ```
 
-The manual host acceptance checklist remains necessary for WSL2/Docker Desktop behavior, NVIDIA telemetry, loopback exposure and measured resource cost. The current implementation does not claim those long-duration measurements.
+## Pending manual host acceptance
+
+These checks require a separately authorized operator window. Do not stop, restart, reconfigure, or benchmark the live inference service as part of normal implementation or CI.
+
+- [ ] Install and uninstall the named task as a standard user; verify the controller runs only after sign-in and stops at sign-out.
+- [ ] Confirm Docker Desktop and the controller use the same Windows account; verify Docker unavailable reports `Unknown` and recovers when Docker is available.
+- [ ] Confirm controller access is loopback-only; verify the model API has no host-published port and remains on `ddu_inference_bus`.
+- [ ] Verify first-run setup, sign-in, reload reauthentication, sign-out, session revocation, password change, recovery, and current-user runtime ACLs.
+- [ ] Verify DPAPI CurrentUser behavior in this account and from a different Windows user; the other user must see a locked vault.
+- [ ] Record NVML availability, host/controller CPU and RAM, and controller startup cost during a normal workload without changing inference.
+- [ ] Verify expected model alias, revision, image digest, no prompt/response collection, and no credential values in status or metadata.
+
+The controller has not been installed or launched for this implementation. The host-level checks above remain pending. Existing Phase 0 values below are historical baseline observations only.
 
 ## Phase 0 baseline capture
 

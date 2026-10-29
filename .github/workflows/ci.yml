@@ -42,8 +42,13 @@ jobs:
       - name: Run protocol and configuration tests
         run: python -m pytest -q
 
+      - name: Run dashboard backend tests
+        run: python -m pytest -q dashboard/backend/tests
+
       - name: Lint Python
-        run: ruff check scripts tests
+        run: >-
+          ruff check scripts tests
+          dashboard/backend/app dashboard/backend/tests
 
       - name: Lint YAML
         run: yamllint -d relaxed compose.yaml .github/workflows/ci.yml
