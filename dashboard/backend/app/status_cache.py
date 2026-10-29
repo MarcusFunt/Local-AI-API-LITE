@@ -60,8 +60,18 @@ class StatusCache:
         self._observed_tick: float | None = None
         self._last_attempt_tick: float | None = None
         self._refreshing = False
+        self._generation = 0
         self._last_poll_error: str | None = None
         self._last_poll_error_at: str | None = None
+
+    def invalidate(self) -> None:
+        """Force the next status read to request a fresh bounded observation."""
+        with self._lock:
+            self._generation += 1
+            self._observed_tick = None
+            self._last_attempt_tick = None
+            self._last_poll_error = None
+            self._last_poll_error_at = None
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -94,6 +104,8 @@ class StatusCache:
             }
 
     def _refresh(self) -> None:
+        with self._lock:
+            generation = self._generation
         try:
             result = self.reader.read(deadline=self.clock() + self.command_budget)
             if not isinstance(result, dict):
@@ -102,24 +114,28 @@ class StatusCache:
                 category = result.get("poll_error_category")
                 if category not in {"command_timeout", "docker_unavailable"}:
                     category = "docker_unavailable"
-                self._record_failure(category)
+                self._record_failure(category, generation)
                 return
             with self._lock:
+                if generation != self._generation:
+                    return
                 self._data = {**copy.deepcopy(UNKNOWN_SNAPSHOT), **copy.deepcopy(result)}
                 self._observed_at = _now()
                 self._observed_tick = self.clock()
                 self._last_poll_error = None
                 self._last_poll_error_at = None
         except (subprocess.TimeoutExpired, TimeoutError):
-            self._record_failure("command_timeout")
+            self._record_failure("command_timeout", generation)
         except Exception:  # noqa: BLE001 - failure details may contain local paths or command output.
-            self._record_failure("reader_error")
+            self._record_failure("reader_error", generation)
         finally:
             with self._lock:
                 self._refreshing = False
 
-    def _record_failure(self, category: str) -> None:
+    def _record_failure(self, category: str, generation: int) -> None:
         with self._lock:
+            if generation != self._generation:
+                return
             self._last_poll_error = category
             self._last_poll_error_at = _now()
 

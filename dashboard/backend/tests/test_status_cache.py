@@ -183,6 +183,60 @@ def test_failed_refresh_preserves_last_success_and_updates_failure():
         fail_second.set()
 
 
+def test_invalidate_marks_a_good_observation_stale_and_refreshes():
+    status_cache = load_dashboard_module("status_cache")
+    clock = FakeClock()
+    reader_called = threading.Event()
+
+    class Reader:
+        def read(self, deadline=None):
+            reader_called.set()
+            return {"availability": "available", "inference_state": "Ready"}
+
+    cache = status_cache.StatusCache(Reader(), clock=clock)
+    try:
+        cache.get_snapshot()
+        _wait_until(lambda: not cache.get_snapshot()["refreshing"])
+        cache.invalidate()
+        snapshot = cache.get_snapshot()
+        assert snapshot["stale"] is True
+        assert snapshot["refreshing"] is True
+        assert reader_called.wait(timeout=1)
+    finally:
+        _wait_until(lambda: not cache.get_snapshot()["refreshing"])
+
+
+def test_invalidation_discards_an_observation_started_before_mutation():
+    status_cache = load_dashboard_module("status_cache")
+    started = threading.Event()
+    release = threading.Event()
+
+    class Reader:
+        def __init__(self):
+            self.calls = 0
+
+        def read(self, deadline=None):
+            self.calls += 1
+            if self.calls == 1:
+                started.set()
+                release.wait(timeout=1)
+                return {"availability": "available", "inference_state": "Stopped"}
+            return {"availability": "available", "inference_state": "Ready"}
+
+    reader = Reader()
+    cache = status_cache.StatusCache(reader, clock=FakeClock())
+    try:
+        cache.get_snapshot()
+        assert started.wait(timeout=1)
+        cache.invalidate()
+        release.set()
+        _wait_until(lambda: not cache.get_snapshot()["refreshing"])
+        _wait_until(lambda: cache.get_snapshot()["inference_state"] == "Ready")
+        assert reader.calls == 2
+    finally:
+        release.set()
+
+
 def test_no_data_is_unknown_not_zero():
     status_cache = load_dashboard_module("status_cache")
     cache = status_cache.StatusCache(

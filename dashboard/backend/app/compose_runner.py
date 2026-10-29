@@ -13,8 +13,11 @@ from .configuration import (
     PROJECT_NAME,
     SERVICE_NAME,
     ConfigurationError,
+    update_profile_environment,
     validate_compose_root,
 )
+from .docker_status import _configuration_from_command
+from .profiles import load_profiles, match_profile
 
 _CONTAINER_ID = re.compile(r"^[0-9a-fA-F]{12,64}$")
 
@@ -139,6 +142,7 @@ class ComposeRunner:
                 "project_name": PROJECT_NAME,
                 "service": SERVICE_NAME,
                 "runtime_state": "absent",
+                "active_profile_id": None,
                 "network": NETWORK_NAME,
             }
         if len(ids) != 1 or not _CONTAINER_ID.fullmatch(ids[0]):
@@ -162,11 +166,23 @@ class ComposeRunner:
             raise ComposeRunnerError("Runtime container labels do not match the configured project")
         if config.get("Image") != IMAGE_REF:
             raise ComposeRunnerError("Runtime container image does not match the pinned image")
+        state = record.get("State")
+        status = state.get("Status") if isinstance(state, dict) else None
+        command = config.get("Cmd") if isinstance(config, dict) else None
+        try:
+            active_profile_id = match_profile(
+                _configuration_from_command(command, config.get("Image")),
+                load_profiles(),
+            )
+        except (ValueError, TypeError):
+            active_profile_id = None
         network_settings = record.get("NetworkSettings")
         networks = network_settings.get("Networks") if isinstance(network_settings, dict) else None
         network = networks.get(NETWORK_NAME) if isinstance(networks, dict) else None
         aliases = network.get("Aliases") if isinstance(network, dict) else None
-        if not isinstance(aliases, list) or "ddu-llm" not in aliases:
+        if status in {"running", "restarting", "paused"} and (
+            not isinstance(aliases, list) or "ddu-llm" not in aliases
+        ):
             raise ComposeRunnerError("Runtime container is not on the expected network and alias")
         ports = network_settings.get("Ports") if isinstance(network_settings, dict) else None
         if isinstance(ports, dict) and any(bindings for bindings in ports.values()):
@@ -185,16 +201,71 @@ class ComposeRunner:
         ]
         if len(matching_mounts) != 1:
             raise ComposeRunnerError("Runtime container model-cache mount does not match")
-        state = record.get("State")
-        status = state.get("Status") if isinstance(state, dict) else None
         if status not in {"created", "restarting", "running", "removing", "paused", "exited", "dead"}:
             raise ComposeRunnerError("Runtime container state is unavailable")
         return {
             "project_name": PROJECT_NAME,
             "service": SERVICE_NAME,
             "runtime_state": status,
+            "active_profile_id": active_profile_id,
             "network": NETWORK_NAME,
         }
+
+    def configure_profile(self, profile_id: str) -> None:
+        try:
+            update_profile_environment(
+                self.project_root,
+                profile_id,
+                validate_configuration=self.validate_configuration,
+            )
+        except ConfigurationError as exc:
+            raise ComposeRunnerError(str(exc)) from exc
+
+    def assert_alias_released(self) -> bool:
+        """Return true only when no attached network endpoint owns the service alias."""
+        result = self._execute([self.docker_path, "network", "inspect", NETWORK_NAME])
+        try:
+            networks = json.loads(result.stdout)
+        except (TypeError, json.JSONDecodeError):
+            raise ComposeRunnerError("Docker returned invalid network inspection data") from None
+        if (
+            not isinstance(networks, list)
+            or len(networks) != 1
+            or not isinstance(networks[0], dict)
+            or networks[0].get("Name") != NETWORK_NAME
+        ):
+            raise ComposeRunnerError("The configured inference network is unavailable")
+        containers = networks[0].get("Containers") or {}
+        if not isinstance(containers, dict):
+            raise ComposeRunnerError("Inference network attachments are unavailable")
+        ids = list(containers)
+        if not ids:
+            return True
+        if any(not isinstance(container_id, str) or not _CONTAINER_ID.fullmatch(container_id) for container_id in ids):
+            raise ComposeRunnerError("Inference network returned an invalid container identity")
+        inspected = self._execute([self.docker_path, "inspect", *ids])
+        try:
+            records = json.loads(inspected.stdout)
+        except (TypeError, json.JSONDecodeError):
+            raise ComposeRunnerError("Docker returned invalid network endpoint inspection data") from None
+        if not isinstance(records, list) or len(records) != len(ids):
+            raise ComposeRunnerError("Docker returned incomplete network endpoint inspection data")
+        for record in records:
+            if not isinstance(record, dict):
+                raise ComposeRunnerError("Docker returned invalid network endpoint inspection data")
+            network_settings = record.get("NetworkSettings")
+            attached_networks = (
+                network_settings.get("Networks") if isinstance(network_settings, dict) else None
+            )
+            attachment = (
+                attached_networks.get(NETWORK_NAME)
+                if isinstance(attached_networks, dict)
+                else None
+            )
+            aliases = attachment.get("Aliases") if isinstance(attachment, dict) else None
+            if isinstance(aliases, list) and "ddu-llm" in aliases:
+                return False
+        return True
 
     def stop_vllm(self) -> dict[str, str]:
         before = self.inspect_project()

@@ -114,6 +114,23 @@ def validate_compose_root(project_root: Path) -> Path:
     return root
 
 
+def load_allowlisted_profile(profile_id: str) -> dict[str, object]:
+    """Return a registry entry only when it exactly matches a host-validated profile."""
+    expected = _PROFILE_VALUES.get(profile_id)
+    if expected is None:
+        raise ConfigurationError("Requested dashboard profile is not allowlisted")
+    try:
+        profiles = load_profiles()
+        profile = next((item for item in profiles if item.get("id") == profile_id), None)
+    except (OSError, TypeError, ValueError) as exc:
+        raise ConfigurationError("Dashboard profile registry is unavailable") from exc
+    if profile is None or profile.get("validation_state") != "validated":
+        raise ConfigurationError("Requested dashboard profile is not validated")
+    if any(profile.get(field) != value for field, value in expected.items()):
+        raise ConfigurationError("Dashboard profile differs from the pinned allowlist")
+    return {**profile}
+
+
 class LocalSettingsStore:
     """Protected per-user settings; no project root is inferred by default."""
 
@@ -187,19 +204,8 @@ def update_profile_environment(
 ) -> None:
     """Atomically update only known profile keys after validating the candidate Compose file."""
     root = validate_compose_root(project_root)
-    expected = _PROFILE_VALUES.get(profile_id)
-    if expected is None:
-        raise ConfigurationError("Requested dashboard profile is not allowlisted")
-    try:
-        profiles = load_profiles()
-        profile = next((item for item in profiles if item.get("id") == profile_id), None)
-    except (OSError, TypeError, ValueError) as exc:
-        raise ConfigurationError("Dashboard profile registry is unavailable") from exc
-    if profile is None or profile.get("validation_state") != "validated":
-        raise ConfigurationError("Requested dashboard profile is not validated")
-    for field, value in expected.items():
-        if profile.get(field) != value:
-            raise ConfigurationError("Dashboard profile differs from the pinned allowlist")
+    load_allowlisted_profile(profile_id)
+    expected = _PROFILE_VALUES[profile_id]
 
     env_path = root / ".env"
     temporary: Path | None = None

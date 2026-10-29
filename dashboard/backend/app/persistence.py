@@ -55,6 +55,19 @@ class MetadataStore:
         except sqlite3.Error:
             raise MetadataStoreError("Dashboard metadata storage is unavailable") from None
 
+    def schema_version(self) -> int:
+        """Return the current schema version through the same serialized transaction path."""
+        try:
+            with self.transaction() as connection:
+                row = connection.execute(
+                    "SELECT version FROM schema_version WHERE singleton = 1"
+                ).fetchone()
+            if row is None:
+                raise MetadataStoreError("Dashboard metadata schema is invalid")
+            return int(row[0])
+        except sqlite3.Error:
+            raise MetadataStoreError("Dashboard metadata storage is unavailable") from None
+
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None

@@ -179,3 +179,62 @@ def test_runtime_label_or_network_mismatch_fails_closed(tmp_path):
         assert "project" in str(exc).casefold() or "runtime" in str(exc).casefold()
     else:
         raise AssertionError("a mismatched runtime project must be rejected")
+
+
+def test_old_service_must_release_network_alias_before_replacement_start(tmp_path):
+    compose_runner = load_dashboard_module("compose_runner")
+    root, _cache_source = _project_root(tmp_path)
+    endpoint = {
+        "Id": "abcdef1234567890",
+        "NetworkSettings": {
+            "Networks": {"ddu_inference_bus": {"Aliases": ["old-container", "ddu-llm"]}}
+        },
+    }
+    calls: list[list[str]] = []
+
+    def occupied(args, **_kwargs):
+        calls.append(args)
+        if args[1:3] == ["network", "inspect"]:
+            payload = [{"Name": "ddu_inference_bus", "Containers": {endpoint["Id"]: {}}}]
+            return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+        if args[1] == "inspect":
+            return subprocess.CompletedProcess(args, 0, json.dumps([endpoint]), "")
+        raise AssertionError(f"unexpected Docker command: {args}")
+
+    runner = compose_runner.ComposeRunner(root, run=occupied, docker_path="docker")
+
+    assert runner.assert_alias_released() is False
+    assert all("up" not in args for args in calls)
+
+    def empty(args, **_kwargs):
+        assert args[1:3] == ["network", "inspect"]
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            json.dumps([{"Name": "ddu_inference_bus", "Containers": None}]),
+            "",
+        )
+
+    assert compose_runner.ComposeRunner(root, run=empty).assert_alias_released() is True
+
+
+def test_stopped_runtime_may_have_disconnected_network_alias(tmp_path):
+    compose_runner = load_dashboard_module("compose_runner")
+    root, cache_source = _project_root(tmp_path)
+
+    def run(args, **_kwargs):
+        if "config" in args:
+            return subprocess.CompletedProcess(args, 0, json.dumps(_rendered_config(cache_source)), "")
+        if "ps" in args:
+            return subprocess.CompletedProcess(args, 0, "abcdef1234567890\n", "")
+        if args[1] == "inspect":
+            record = _runtime_container(cache_source)
+            record["State"]["Status"] = "exited"
+            record["NetworkSettings"]["Networks"] = {}
+            return subprocess.CompletedProcess(args, 0, json.dumps([record]), "")
+        raise AssertionError(f"unexpected Docker command: {args}")
+
+    result = compose_runner.ComposeRunner(root, run=run).inspect_project()
+
+    assert result["runtime_state"] == "exited"
+    assert result["active_profile_id"] is None
