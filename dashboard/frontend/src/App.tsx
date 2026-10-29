@@ -6,12 +6,13 @@ import { createAuthClient } from "./auth";
 import type { AuthClient, AuthState, AuthenticatedState } from "./auth";
 import { AuthPage } from "./pages/AuthPage";
 import { BenchmarksPage } from "./pages/BenchmarksPage";
+import { LogsPage } from "./pages/LogsPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { startDashboardPolling } from "./polling";
 
-type PageName = "Overview" | "Models" | "Benchmarks" | "Settings";
+type PageName = "Overview" | "Models" | "Benchmarks" | "Logs" | "Settings";
 
 const SAMPLE_LIMIT = 120;
 const VISIBLE_POLL_MS = 5000;
@@ -103,7 +104,7 @@ function Sidebar({ page, onNavigate, onLogout }: {
   onNavigate: (page: PageName) => void;
   onLogout: () => void;
 }) {
-  const pages: PageName[] = ["Overview", "Models", "Benchmarks", "Settings"];
+  const pages: PageName[] = ["Overview", "Models", "Benchmarks", "Logs", "Settings"];
   return (
     <aside className="sidebar">
       <div className="brand-lockup">
@@ -129,7 +130,7 @@ function Sidebar({ page, onNavigate, onLogout }: {
 }
 
 function Topbar({ page, status }: { page: PageName; status: DashboardStatus | null }) {
-  const heading = page === "Overview" ? "System overview" : page === "Models" ? "Model configuration" : page === "Benchmarks" ? "Benchmarks & jobs" : "Security settings";
+  const heading = page === "Overview" ? "System overview" : page === "Models" ? "Model configuration" : page === "Benchmarks" ? "Benchmarks & jobs" : page === "Logs" ? "Service logs" : "Security settings";
   const freshness = status?.status_cache;
   const freshnessLabel = freshness?.stale
     ? freshness.refreshing ? "STALE · REFRESHING" : "STALE SNAPSHOT"
@@ -173,6 +174,7 @@ function AuthenticatedDashboard({
         {page === "Overview" && <OverviewPage status={status} samples={samples} />}
         {page === "Models" && <ModelsPage status={status} profiles={profiles} csrfToken={authState.csrfToken} />}
         {page === "Benchmarks" && <BenchmarksPage csrfToken={authState.csrfToken} />}
+        {page === "Logs" && <LogsPage />}
         {page === "Settings" && <SettingsPage
           authClient={authClient}
           csrfToken={authState.csrfToken}

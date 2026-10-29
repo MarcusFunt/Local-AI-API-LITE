@@ -223,6 +223,12 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .job-confirm-box h3 { margin: 0; color: #e9dcba; font: 600 13px var(--display); }
 .job-confirm-box p { color: #a9a08a; font-size: 10px; line-height: 1.5; }
 .job-confirm-box > div { display: flex; justify-content: flex-end; gap: 8px; }
+.logs-page .section-heading { align-items: center; gap: 16px; }
+.logs-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.logs-tail-label { color: #849188; font: 9px var(--mono); }
+.logs-actions select { min-width: 68px; }
+.logs-disclosure { max-width: 880px; margin: 0 0 15px; color: #849188; font-size: 12px; line-height: 1.6; }
+.logs-output { min-height: 360px; max-height: 70vh; overflow: auto; margin: 0; padding: 15px 17px; border: 1px solid #29312c; border-radius: 8px; color: #b8c7bc; background: #101411; font: 10px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .job-confirm-box .secondary-button { margin-top: 0; }
 .job-artifact-view { margin-top: 17px; padding-top: 14px; border-top: 1px solid #29312c; }
 .job-artifact-view h3 { margin: 0; color: #dce5de; font: 600 12px var(--display); }

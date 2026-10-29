@@ -114,6 +114,12 @@ export interface JobCleanupPreview {
   removable_artifacts: number;
 }
 
+export interface LogsResponse {
+  availability: "available" | "unavailable";
+  lines: string[];
+  error_category: string | null;
+}
+
 export interface ModelConfiguration {
   model_id: string;
   model_revision: string | null;
@@ -195,6 +201,11 @@ export function getStatus(): Promise<DashboardStatus> {
 
 export function getProfiles(): Promise<{ profiles: Profile[] }> {
   return getJson<{ profiles: Profile[] }>("/api/control/v1/profiles");
+}
+
+export function getLogs(tail = 100): Promise<LogsResponse> {
+  const boundedTail = Math.max(1, Math.min(200, Math.trunc(tail)));
+  return getJson<LogsResponse>(`/api/control/v1/logs?tail=${boundedTail}`);
 }
 
 async function postOperation(

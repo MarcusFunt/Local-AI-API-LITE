@@ -1,6 +1,6 @@
 # Local dashboard
 
-The dashboard is a local status and administration UI for Local-AI-API-LITE. The current phase provides authenticated read-only inference status, profile display, host telemetry, and local administrator/session settings. It does not start, stop, restart, or reconfigure inference.
+The dashboard is a local status and administration UI for Local-AI-API-LITE. It provides authenticated inference status and lifecycle controls, profile display, host telemetry, job history, sanitized service logs, and local administrator/session settings.
 
 ## Requirements
 
@@ -80,6 +80,7 @@ The command validates the pinned Compose project, external `ddu_inference_bus` n
 - `GET /api/control/v1/telemetry`, `GET /api/control/v1/profiles`, and `GET /api/control/v1/operations/state` require an administrator session.
 - `POST /api/control/v1/operations/start`, `/stop`, `/restart`, and `/apply-profile` require an administrator session and CSRF token. Start and profile changes accept only a versioned profile ID; the API exposes no shell, Compose argument, prompt, or arbitrary command input.
 - Job history, status, results, comparisons, and cleanup previews require an administrator session. Job start, cancellation, and confirmed cleanup also require a CSRF token.
+- `GET /api/control/v1/logs` requires an administrator session and returns a bounded, redacted tail from the fixed `vllm` Compose service.
 
 ## Inference operations
 
@@ -97,9 +98,13 @@ Job metadata is stored in the dashboard's local SQLite database and artifacts un
 
 The page polls job history while a job is queued or running. A cancellation request stops only the dashboard's ephemeral job container. It does not stop or reconfigure the inference service. The controller does not collect benchmark prompt or response content.
 
+## Sanitized service logs
+
+The Logs page reads at most 200 recent lines from the fixed `vllm` Compose service. It discovers the container through the pinned Compose project and service labels, reads its environment only in memory to redact credential values, then filters credential assignments, bearer tokens, and filesystem paths before returning the result. If the output contains prompt, completion, message, or request-body fields, the content-bearing output is replaced with a single notice. The controller does not save log copies; browser export uses only the already-sanitized response.
+
 The status handler reads from memory immediately while a single bounded worker refreshes Docker status and host telemetry. A successful Docker query with no matching container is `Stopped`; a failed query is `Unknown/Unavailable`. The UI polls every five seconds while visible, backs off to thirty seconds while hidden, allows one in-flight status request, and keeps up to 120 samples in browser memory. It does not write metrics or model data to disk.
 
-Database monitoring and log routes are not enabled at this stage. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
+Database monitoring is not enabled at this stage. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
 
 ## Checks
 
