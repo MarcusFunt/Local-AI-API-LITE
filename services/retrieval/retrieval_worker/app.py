@@ -17,16 +17,28 @@ from .contracts import (
     MAX_BODY_BYTES,
     MAX_EMBEDDING_BATCH_SIZE,
     MAX_INPUT_TOKENS,
+    MAX_PAIR_TOKENS,
+    MAX_RERANKING_PAIRS,
     EmbeddingData,
     EmbeddingRequest,
     EmbeddingResponse,
-    EmbeddingUsage,
     InputTooLongError,
     MissingArtifactError,
     QueueFullError,
+    RerankingRequest,
+    RerankingResponse,
+    RerankingResult,
     ServiceError,
+    TokenUsage,
 )
-from .models import EMBEDDING_ALIAS, EMBEDDING_METADATA
+from .models import (
+    EMBEDDING_ALIAS,
+    EMBEDDING_METADATA,
+    RERANKING_ALIAS,
+    RERANKING_METADATA,
+    RERANKING_REVISION,
+    ModelMetadata,
+)
 from .queue import InferenceQueue
 
 
@@ -110,16 +122,12 @@ class WorkerState:
             self.status = "ready"
 
 
-def create_embedding_app(
-    adapter_factory: Callable[[], Any] | None = None,
+def _create_worker_app(
+    adapter_factory: Callable[[], Any],
+    metadata: ModelMetadata,
     *,
-    inference_timeout_seconds: float = 60,
+    inference_timeout_seconds: float,
 ) -> FastAPI:
-    if adapter_factory is None:
-        from .embedding import create_embedding_adapter
-
-        adapter_factory = create_embedding_adapter
-
     worker = WorkerState(adapter_factory)
     queue = InferenceQueue(max_outstanding=2, timeout_seconds=inference_timeout_seconds)
 
@@ -178,7 +186,26 @@ def create_embedding_app(
 
     @app.get("/v1/models")
     async def models() -> dict[str, list[dict[str, object]]]:
-        return {"data": [EMBEDDING_METADATA.as_dict()]}
+        return {"data": [metadata.as_dict()]}
+
+    return app
+
+
+def create_embedding_app(
+    adapter_factory: Callable[[], Any] | None = None,
+    *,
+    inference_timeout_seconds: float = 60,
+) -> FastAPI:
+    if adapter_factory is None:
+        from .embedding import create_embedding_adapter
+
+        adapter_factory = create_embedding_adapter
+
+    app = _create_worker_app(
+        adapter_factory,
+        EMBEDDING_METADATA,
+        inference_timeout_seconds=inference_timeout_seconds,
+    )
 
     @app.post("/v1/embeddings", response_model=EmbeddingResponse)
     async def embeddings(payload: EmbeddingRequest, request: Request) -> EmbeddingResponse:
@@ -225,7 +252,82 @@ def create_embedding_app(
         return EmbeddingResponse(
             data=data,
             model=EMBEDDING_ALIAS,
-            usage=EmbeddingUsage(prompt_tokens=total_tokens, total_tokens=total_tokens),
+            usage=TokenUsage(prompt_tokens=total_tokens, total_tokens=total_tokens),
+        )
+
+    return app
+
+
+def create_reranking_app(
+    adapter_factory: Callable[[], Any] | None = None,
+    *,
+    inference_timeout_seconds: float = 60,
+) -> FastAPI:
+    if adapter_factory is None:
+        from .reranking import create_reranking_adapter
+
+        adapter_factory = create_reranking_adapter
+
+    app = _create_worker_app(
+        adapter_factory,
+        RERANKING_METADATA,
+        inference_timeout_seconds=inference_timeout_seconds,
+    )
+
+    @app.post("/v1/rerank", response_model=RerankingResponse)
+    async def rerank(payload: RerankingRequest, request: Request) -> RerankingResponse:
+        if payload.model != RERANKING_ALIAS:
+            raise ServiceError(422, "unsupported_model", "Model alias is not supported.")
+        if not payload.query.strip() or not payload.documents:
+            raise ServiceError(422, "invalid_input", "Query and documents must not be empty.")
+        if len(payload.documents) > MAX_RERANKING_PAIRS:
+            raise ServiceError(422, "invalid_batch", "Candidate count is outside supported limits.")
+        if any(not document.strip() for document in payload.documents):
+            raise ServiceError(422, "invalid_input", "Documents must not be empty.")
+        if payload.top_n is not None and not 1 <= payload.top_n <= len(payload.documents):
+            raise ServiceError(422, "invalid_top_n", "top_n is outside supported limits.")
+
+        state: WorkerState = request.app.state.worker
+        if state.status != "ready" or state.adapter is None:
+            raise ServiceError(503, "not_ready", "Model is not ready.")
+        adapter = state.adapter
+        queue: InferenceQueue = request.app.state.inference_queue
+
+        def count_and_score() -> tuple[list[int], Any]:
+            token_counts = [
+                adapter.count_pair_tokens(payload.query, document)
+                for document in payload.documents
+            ]
+            if any(count > MAX_PAIR_TOKENS for count in token_counts):
+                raise InputTooLongError()
+            scores = adapter.score_pairs(payload.query, payload.documents)
+            return token_counts, scores
+
+        try:
+            token_counts, raw_scores = await queue.run(count_and_score)
+        except InputTooLongError:
+            raise ServiceError(422, "pair_too_long", "A query/document pair exceeds the token limit.") from None
+        except QueueFullError:
+            raise ServiceError(429, "capacity", "Inference capacity is full.") from None
+        except TimeoutError:
+            raise ServiceError(504, "timeout", "Inference timed out.") from None
+        except Exception:  # noqa: BLE001 - adapter errors must never reach HTTP responses.
+            raise ServiceError(500, "inference_failed", "Inference failed.") from None
+
+        try:
+            scores = _validate_scores(raw_scores, expected_count=len(payload.documents))
+        except (TypeError, ValueError, OverflowError):
+            raise ServiceError(500, "invalid_model_output", "Inference returned invalid output.") from None
+        ranked = sorted(enumerate(scores), key=lambda result: (-result[1], result[0]))
+        if payload.top_n is not None:
+            ranked = ranked[: payload.top_n]
+        results = [RerankingResult(index=index, relevance_score=score) for index, score in ranked]
+        total_tokens = sum(token_counts)
+        return RerankingResponse(
+            model=RERANKING_ALIAS,
+            revision=RERANKING_REVISION,
+            results=results,
+            usage=TokenUsage(prompt_tokens=total_tokens, total_tokens=total_tokens),
         )
 
     return app
@@ -248,15 +350,23 @@ def _normalize_vectors(raw_vectors: Any, *, expected_count: int) -> list[list[fl
     return normalized
 
 
+def _validate_scores(raw_scores: Any, *, expected_count: int) -> list[float]:
+    if len(raw_scores) != expected_count:
+        raise ValueError("score count mismatch")
+    scores = [float(value) for value in raw_scores]
+    if not all(math.isfinite(score) for score in scores):
+        raise ValueError("score contains non-finite values")
+    return scores
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--role", choices=("embedding",), required=True)
+    parser.add_argument("--role", choices=("embedding", "reranking"), required=True)
     args = parser.parse_args()
-    if args.role != "embedding":
-        raise SystemExit("Unsupported worker role")
     import uvicorn
 
-    uvicorn.run(create_embedding_app(), host="0.0.0.0", port=8080, access_log=False)
+    app_factory = create_embedding_app if args.role == "embedding" else create_reranking_app
+    uvicorn.run(app_factory(), host="0.0.0.0", port=8080, access_log=False)
 
 
 if __name__ == "__main__":

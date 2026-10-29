@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 
 MAX_BODY_BYTES = 256 * 1024
 MAX_EMBEDDING_BATCH_SIZE = 8
 MAX_INPUT_TOKENS = 2048
 EXPECTED_DIMENSION = 1024
+MAX_RERANKING_PAIRS = 20
+MAX_PAIR_TOKENS = 2048
 
 
 class MissingArtifactError(Exception):
@@ -45,7 +47,7 @@ class EmbeddingData(BaseModel):
     embedding: list[float]
 
 
-class EmbeddingUsage(BaseModel):
+class TokenUsage(BaseModel):
     prompt_tokens: int
     total_tokens: int
 
@@ -54,4 +56,25 @@ class EmbeddingResponse(BaseModel):
     object: Literal["list"] = "list"
     data: list[EmbeddingData]
     model: str
-    usage: EmbeddingUsage
+    usage: TokenUsage
+
+
+class RerankingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    model: StrictStr
+    query: StrictStr
+    documents: list[StrictStr]
+    top_n: StrictInt | None = None
+
+
+class RerankingResult(BaseModel):
+    index: int
+    relevance_score: float
+
+
+class RerankingResponse(BaseModel):
+    model: str
+    revision: str
+    results: list[RerankingResult]
+    usage: TokenUsage

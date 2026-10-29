@@ -32,15 +32,17 @@ def test_embedding_service_is_private_cpu_only_and_independent():
 
 def test_embedding_cache_is_external_and_read_only_for_serving():
     compose = read_retrieval_compose()
-    service = compose["services"]["embed"]
-    cache_mounts = [mount for mount in service["volumes"] if mount["target"] == "/models"]
+    for name in ("embed", "rerank"):
+        service = compose["services"][name]
+        cache_mounts = [mount for mount in service["volumes"] if mount["target"] == "/models"]
 
-    assert len(cache_mounts) == 1
-    assert cache_mounts[0]["type"] == "bind"
-    assert cache_mounts[0]["source"] == "${MODEL_CACHE_DIR:?Set MODEL_CACHE_DIR}"
-    assert cache_mounts[0]["read_only"] is True
-    assert service["environment"]["HF_HUB_OFFLINE"] == "1"
-    assert service["environment"]["TRANSFORMERS_OFFLINE"] == "1"
+        assert len(cache_mounts) == 1
+        assert cache_mounts[0]["type"] == "bind"
+        assert cache_mounts[0]["source"] == "${MODEL_CACHE_DIR:?Set MODEL_CACHE_DIR}"
+        assert cache_mounts[0]["read_only"] is True
+        assert service["environment"]["HF_HUB_OFFLINE"] == "1"
+        assert service["environment"]["TRANSFORMERS_OFFLINE"] == "1"
+        assert service["environment"]["HF_MODULES_CACHE"] == "/tmp/hf-modules"
 
 
 def test_model_installer_is_explicit_write_access_and_not_on_inference_network():
@@ -55,12 +57,27 @@ def test_model_installer_is_explicit_write_access_and_not_on_inference_network()
 
 
 def test_retrieval_alias_does_not_replace_existing_llm_contract():
-    retrieval_alias = read_retrieval_compose()["services"]["embed"]["networks"]["inference"]["aliases"]
+    retrieval_services = read_retrieval_compose()["services"]
     root_compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
 
-    assert retrieval_alias == ["ddu-embed"]
+    assert retrieval_services["embed"]["networks"]["inference"]["aliases"] == ["ddu-embed"]
+    assert retrieval_services["rerank"]["networks"]["inference"]["aliases"] == ["ddu-rerank"]
     assert root_compose["services"]["vllm"]["networks"]["inference"]["aliases"] == ["ddu-llm"]
     assert "ports" not in root_compose["services"]["vllm"]
+
+
+def test_reranking_service_is_private_cpu_only_and_independent():
+    compose = read_retrieval_compose()
+    service = compose["services"]["rerank"]
+
+    assert service["image"] == "local-ai-api-lite-retrieval:0.1.0"
+    assert service["command"] == ["python", "-m", "retrieval_worker.app", "--role", "reranking"]
+    assert "ports" not in service
+    assert "gpus" not in service
+    assert "depends_on" not in service
+    assert "restart" not in service
+    assert service["networks"]["inference"]["aliases"] == ["ddu-rerank"]
+    assert service["deploy"]["resources"]["limits"] == {"cpus": "2.0", "memory": "4g"}
 
 
 def test_retrieval_env_example_uses_an_external_cache_without_credentials():

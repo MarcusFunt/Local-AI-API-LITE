@@ -1,6 +1,6 @@
 # Retrieval inference serving design
 
-**Status:** M1 worker implementation with fake-adapter validation; model installation, worker startup, and host acceptance remain pending.
+**Status:** M1/M2 worker implementations with fake-adapter validation; model installation, worker startup, and host acceptance remain pending.
 
 **Baseline:** `main` at `b6311366df8896ce356b2dfdaf86cc6690179062` (2026-10-29).
 **Scope:** CPU embeddings (M1) and CPU reranking (M2). Host resource acceptance, retrieval-quality evaluation, and game integration remain future operator/project gates.
@@ -25,7 +25,7 @@ Each process offers:
 
 Malformed JSON or required fields: 400. Oversized body: 413. Unsupported model alias/options or invalid semantic fields: 422. Saturated queue: 429. Model unavailable: 503. Inference timeout: 504. Do not include submitted text, document content, vectors, paths, secrets, raw exception text, or stack traces in responses or logs. Validate all model outputs as finite before returning them.
 
-Normal service startup is offline-only (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`) and loads only the allowlisted local snapshots with `local_files_only=True`. A separate explicit installer accepts only the pinned artifacts and supports a no-write `--plan` plus an explicit `--install`. The installer mounts the operator-selected persistent cache read-write; serving containers mount it read-only. No HTTP field selects a model ID, revision, path, code, or command.
+Normal service startup is offline-only (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`) and loads only the allowlisted local snapshots with `local_files_only=True`. A separate explicit installer accepts only the pinned artifacts and supports a no-write `--plan` plus an explicit `--install`. The installer mounts the operator-selected persistent cache read-write; serving containers mount it read-only. Transformers' verified custom-code module copy uses `/tmp/hf-modules` on the container's bounded ephemeral tmpfs, so startup does not write to the model cache. No HTTP field selects a model ID, revision, path, code, or command.
 
 ## M1: embeddings
 
@@ -55,14 +55,14 @@ For `query`, use the versioned instruction `Instruct: Given a question, retrieve
 
 The model weights and tokenizer are not installed by this change. Readiness must remain 503 with sanitized `missing_artifact` when the cache is absent, while liveness stays healthy.
 
-For a future operator-approved window, create an absolute cache directory outside the repository, copy `deploy/retrieval/.env.example` to `deploy/retrieval/.env`, and set `MODEL_CACHE_DIR` to that directory. The explicit installer profile supports a no-write plan followed by a deliberate install:
+For a future operator-approved window, create an absolute cache directory outside the repository, copy `deploy/retrieval/.env.example` to `deploy/retrieval/.env`, and set `MODEL_CACHE_DIR` to that directory. The explicit installer profile supports a no-write plan followed by a deliberate install of the fixed embedding, reranker, and reviewed-code artifacts:
 
 ```sh
 docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml --profile install run --rm model-installer --plan
 docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml --profile install run --rm model-installer --install
 ```
 
-Only after separately reviewing the cache and host budget should the operator build/start the worker with `docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml up -d embed`. These commands are documentation; this implementation did not run them.
+Only after separately reviewing the cache and host budget should the operator build/start workers with `docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml up -d embed rerank`. These commands are documentation; this implementation did not run them.
 
 ## M2: reranking
 
@@ -88,7 +88,9 @@ Request example:
 
 Return records containing original `index` and finite `relevance_score`, ordered by descending score and then ascending original index for ties. Include the fixed alias and model revision; never echo documents. Scores are ranking signals and are not calibrated probabilities or comparable across model changes.
 
-The GTE model uses custom Transformers code. The loader must set `trust_remote_code=True` only while loading the reviewed, pinned model and code revisions, with both artifacts preinstalled in the local cache and `local_files_only=True`. Both revisions and the SHA-256 of the reviewed `configuration.py` (`3411088045ffb8a9a0aa9936eae275896b39983a2ee5b08f091b44e6289e4fe4`) and `modeling.py` (`374670b416fcc82f081c9cd28b5fd61c2bd91bbe18eb4798fcc48a81f9c250a0`) are recorded for verification. Floating or request-selected code is prohibited.
+The JSON response uses `model`, `revision`, `results` (each result has `index` and `relevance_score`), and `usage` (`prompt_tokens`, `total_tokens`). Token usage is the sum of query/document pair token counts and does not include model-internal special-token accounting beyond the tokenizer's pair encoding.
+
+The GTE model uses custom Transformers code. The loader sets `trust_remote_code=True` only after verifying the reviewed, pinned model and code revisions from the local cache, with `local_files_only=True`. The installer and loader verify SHA-256 for `configuration.py` (`3411088045ffb8a9a0aa9936eae275896b39983a2ee5b08f091b44e6289e4fe4`) and `modeling.py` (`374670b416fcc82f081c9cd28b5fd61c2bd91bbe18eb4798fcc48a81f9c250a0`). Inference uses bounded chunks of two candidate pairs, rejects overflow rather than truncating, and returns raw finite ranking scores. Floating or request-selected code is prohibited.
 
 ## Build and resource pins
 

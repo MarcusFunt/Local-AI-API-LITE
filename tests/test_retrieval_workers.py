@@ -6,7 +6,9 @@ import threading
 import time
 import types
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,10 +16,12 @@ from fastapi.testclient import TestClient
 SERVICE_ROOT = Path(__file__).resolve().parents[1] / "services" / "retrieval"
 sys.path.insert(0, str(SERVICE_ROOT))
 
-from retrieval_worker.app import create_embedding_app
+from retrieval_worker import reranking as reranking_module
+from retrieval_worker.app import create_embedding_app, create_reranking_app
 from retrieval_worker.contracts import MAX_BODY_BYTES, MissingArtifactError
 from retrieval_worker.embedding import format_embedding_input
 from retrieval_worker.install_models import main as install_models_main
+from retrieval_worker.models import RERANKING_CODE_REVISION, RERANKING_REVISION
 from retrieval_worker.queue import InferenceQueue, QueueFullError
 
 
@@ -42,6 +46,24 @@ class FakeEmbeddingAdapter:
             vector[index] = 1.0
             vectors.append(vector)
         return vectors
+
+
+class FakeRerankerAdapter:
+    def __init__(self, scores: list[float] | None = None, *, token_count: int = 3):
+        self.scores = scores or []
+        self.token_count = token_count
+        self.counted: list[tuple[str, str]] = []
+        self.scored: list[tuple[str, list[str]]] = []
+
+    def count_pair_tokens(self, query: str, document: str) -> int:
+        self.counted.append((query, document))
+        return self.token_count
+
+    def score_pairs(self, query: str, documents: list[str]) -> list[float]:
+        self.scored.append((query, documents))
+        if self.scores:
+            return self.scores
+        return [float(len(documents) - index) for index, _ in enumerate(documents)]
 
 
 def wait_until_ready(client: TestClient) -> None:
@@ -294,6 +316,8 @@ def test_installer_plan_is_read_only_and_only_lists_the_fixed_snapshot(monkeypat
     assert "ddu-embed" in output
     assert "Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3" in output
     assert "Plan only; no files were written." in output
+    assert "Alibaba-NLP/gte-multilingual-reranker-base" in output
+    assert "Alibaba-NLP/new-impl@40ced75c3017eb27626c9d4ea981bde21a2662f4" in output
 
 
 def test_malformed_installer_invocation_does_not_start_a_download(monkeypatch):
@@ -309,9 +333,19 @@ def test_installer_requires_explicit_opt_in_and_uses_only_the_pinned_snapshot(
     monkeypatch, capsys
 ):
     calls: list[dict[str, object]] = []
+    verified: list[str] = []
     fake_hub = types.ModuleType("huggingface_hub")
-    fake_hub.snapshot_download = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
+    def snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return f"/fake/{kwargs['repo_id']}"
+
+    fake_hub.snapshot_download = snapshot_download  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setattr(
+        reranking_module,
+        "verify_reviewed_code_snapshot",
+        lambda path: verified.append(str(path)),
+    )
     monkeypatch.setattr("sys.argv", ["install_models", "--install"])
 
     install_models_main()
@@ -322,9 +356,22 @@ def test_installer_requires_explicit_opt_in_and_uses_only_the_pinned_snapshot(
             "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
             "cache_dir": "/models/hub",
             "local_files_only": False,
-        }
+        },
+        {
+            "repo_id": "Alibaba-NLP/gte-multilingual-reranker-base",
+            "revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+            "cache_dir": "/models/hub",
+            "local_files_only": False,
+        },
+        {
+            "repo_id": "Alibaba-NLP/new-impl",
+            "revision": "40ced75c3017eb27626c9d4ea981bde21a2662f4",
+            "cache_dir": "/models/hub",
+            "local_files_only": False,
+        },
     ]
-    assert "Pinned embedding artifact installed." in capsys.readouterr().out
+    assert verified == ["/fake/Alibaba-NLP/new-impl"]
+    assert "Pinned retrieval artifacts installed." in capsys.readouterr().out
 
 
 def test_inference_error_does_not_echo_adapter_exception():
@@ -469,3 +516,352 @@ def test_queue_rejects_capacity_without_starting_third_call():
 
     asyncio.run(scenario())
     assert invoked == ["active", "queued"]
+
+
+def test_rerank_returns_scores_descending_with_original_indexes():
+    adapter = FakeRerankerAdapter(scores=[0.3, 0.9, -0.1])
+    app = create_reranking_app(adapter_factory=lambda: adapter)
+    documents = ["passage A", "passage B", "passage C"]
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "question", "documents": documents},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "ddu-rerank"
+    assert payload["revision"] == "8215cf04918ba6f7b6a62bb44238ce2953d8831c"
+    assert payload["results"] == [
+        {"index": 1, "relevance_score": 0.9},
+        {"index": 0, "relevance_score": 0.3},
+        {"index": 2, "relevance_score": -0.1},
+    ]
+    assert adapter.scored == [("question", documents)]
+
+
+def test_rerank_ties_are_ordered_by_original_index():
+    app = create_reranking_app(adapter_factory=lambda: FakeRerankerAdapter([0.5, 0.5, 0.5]))
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": ["a", "b", "c"]},
+        )
+
+    assert response.status_code == 200
+    assert [item["index"] for item in response.json()["results"]] == [0, 1, 2]
+
+
+def test_rerank_top_n_preserves_original_candidate_indexes():
+    app = create_reranking_app(adapter_factory=lambda: FakeRerankerAdapter([0.1, 0.9, 0.5]))
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={
+                "model": "ddu-rerank",
+                "query": "q",
+                "documents": ["a", "b", "c"],
+                "top_n": 2,
+            },
+        )
+
+    assert response.status_code == 200
+    assert [item["index"] for item in response.json()["results"]] == [1, 2]
+
+
+@pytest.mark.parametrize("top_n", [0, 4])
+def test_rerank_rejects_invalid_top_n(top_n: int):
+    adapter = FakeRerankerAdapter()
+    app = create_reranking_app(adapter_factory=lambda: adapter)
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={
+                "model": "ddu-rerank",
+                "query": "q",
+                "documents": ["a", "b", "c"],
+                "top_n": top_n,
+            },
+        )
+
+    assert response.status_code == 422
+    assert adapter.scored == []
+
+
+def test_rerank_pair_token_bound_is_rejected_before_model_scoring():
+    adapter = FakeRerankerAdapter(token_count=2049)
+    app = create_reranking_app(adapter_factory=lambda: adapter)
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": ["too long"]},
+        )
+
+    assert response.status_code == 422
+    assert adapter.counted == [("q", "too long")]
+    assert adapter.scored == []
+
+
+def test_rerank_rejects_more_than_twenty_documents_before_adapter_calls():
+    adapter = FakeRerankerAdapter()
+    app = create_reranking_app(adapter_factory=lambda: adapter)
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": ["d"] * 21},
+        )
+
+    assert response.status_code == 422
+    assert adapter.counted == []
+    assert adapter.scored == []
+
+
+def test_rerank_validation_and_internal_errors_do_not_echo_documents():
+    sentinel = "NEVER_ECHO_THIS_DOCUMENT_4820"
+    app = create_reranking_app(adapter_factory=lambda: FakeRerankerAdapter())
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        invalid = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": [sentinel], "top_n": 0},
+        )
+
+    assert invalid.status_code == 422
+    assert sentinel not in invalid.text
+
+    class BrokenAdapter(FakeRerankerAdapter):
+        def score_pairs(self, query: str, documents: list[str]) -> list[float]:
+            raise RuntimeError(sentinel)
+
+    broken_app = create_reranking_app(adapter_factory=BrokenAdapter)
+    with TestClient(broken_app) as client:
+        wait_until_ready(client)
+        failed = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": [sentinel]},
+        )
+
+    assert failed.status_code == 500
+    assert sentinel not in failed.text
+
+
+def test_non_finite_rerank_score_is_sanitized():
+    app = create_reranking_app(adapter_factory=lambda: FakeRerankerAdapter([float("inf")]))
+    sentinel = "HIDDEN_DOCUMENT_CONTENT"
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": [sentinel]},
+        )
+
+    assert response.status_code == 500
+    assert sentinel not in response.text
+    assert "Infinity" not in response.text
+    assert "relevance_score" not in response.text
+
+
+def test_rerank_missing_artifacts_use_shared_not_ready_contract():
+    def missing_model():
+        raise MissingArtifactError()
+
+    app = create_reranking_app(adapter_factory=missing_model)
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        deadline = time.monotonic() + 2
+        ready = client.get("/ready")
+        while ready.json().get("status") == "loading" and time.monotonic() < deadline:
+            time.sleep(0.01)
+            ready = client.get("/ready")
+        response = client.post(
+            "/v1/rerank",
+            json={"model": "ddu-rerank", "query": "q", "documents": ["doc"]},
+        )
+
+    assert ready.status_code == 503
+    assert ready.json() == {"status": "missing_artifact"}
+    assert response.status_code == 503
+
+
+def test_rerank_rejects_unsupported_model_alias_without_echoing_it():
+    bad_alias = "local/path/to/private-model"
+    app = create_reranking_app(adapter_factory=FakeRerankerAdapter)
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        response = client.post(
+            "/v1/rerank",
+            json={"model": bad_alias, "query": "q", "documents": ["doc"]},
+        )
+
+    assert response.status_code == 422
+    assert bad_alias not in response.text
+
+
+def test_gte_loader_uses_fixed_offline_revisions_and_verified_custom_code(monkeypatch):
+    events: list[object] = []
+    snapshots: list[dict[str, object]] = []
+    tokenizer_options: list[dict[str, object]] = []
+    model_options: list[dict[str, object]] = []
+    batch_sizes: list[int] = []
+
+    class FakeTensor:
+        def __init__(self, values: list[float]):
+            self.values = values
+
+        def reshape(self, *_shape: object) -> FakeTensor:
+            return self
+
+        def float(self) -> FakeTensor:
+            return self
+
+        def cpu(self) -> FakeTensor:
+            return self
+
+        def tolist(self) -> list[float]:
+            return self.values
+
+    class FakeTokenizer:
+        padding_side = "right"
+
+        def __call__(self, first, second=None, **kwargs):
+            if kwargs.get("return_tensors") == "pt":
+                batch_sizes.append(len(first))
+                return {"input_ids": list(range(len(first)))}
+            return {"input_ids": [1, 2, 3]}
+
+    class FakeModel:
+        config = SimpleNamespace(num_labels=1)
+
+        def to(self, device: str):
+            events.append(("device", device))
+            return self
+
+        def eval(self):
+            events.append("eval")
+            return self
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(logits=FakeTensor([0.75] * len(kwargs["input_ids"])))
+
+    class FakeTokenizerClass:
+        @classmethod
+        def from_pretrained(cls, _path, **kwargs):
+            tokenizer_options.append(kwargs)
+            return FakeTokenizer()
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, _path, **kwargs):
+            events.append("model-load")
+            model_options.append(kwargs)
+            return FakeModel()
+
+    class FakeTorch(types.ModuleType):
+        float32 = "float32"
+
+        @staticmethod
+        def set_num_threads(count: int) -> None:
+            events.append(("threads", count))
+
+        @staticmethod
+        def inference_mode():
+            return nullcontext()
+
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.__path__ = []
+
+    def fake_snapshot_download(**kwargs):
+        snapshots.append(kwargs)
+        return f"/fake/{kwargs['repo_id']}"
+
+    fake_hub.snapshot_download = fake_snapshot_download  # type: ignore[attr-defined]
+    fake_errors = types.ModuleType("huggingface_hub.errors")
+    fake_errors.LocalEntryNotFoundError = type("LocalEntryNotFoundError", (Exception,), {})
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoModelForSequenceClassification = FakeModelClass
+    fake_transformers.AutoTokenizer = FakeTokenizerClass
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch("torch"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", fake_errors)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setattr(
+        reranking_module,
+        "verify_reviewed_code_snapshot",
+        lambda path: events.append(("verified", path)),
+    )
+    monkeypatch.setattr(
+        reranking_module,
+        "verify_model_code_reference",
+        lambda path: events.append(("model-config-verified", path)),
+    )
+
+    adapter = reranking_module.create_reranking_adapter()
+
+    assert len(snapshots) == 2
+    assert snapshots[0]["repo_id"] == "Alibaba-NLP/gte-multilingual-reranker-base"
+    assert snapshots[0]["revision"] == RERANKING_REVISION
+    assert snapshots[1]["repo_id"] == "Alibaba-NLP/new-impl"
+    assert snapshots[1]["revision"] == RERANKING_CODE_REVISION
+    assert all(snapshot["local_files_only"] is True for snapshot in snapshots)
+    assert events.index(("verified", "/fake/Alibaba-NLP/new-impl")) < events.index("model-load")
+    assert events.index(("model-config-verified", "/fake/Alibaba-NLP/gte-multilingual-reranker-base")) < events.index("model-load")
+    assert tokenizer_options == [{"revision": RERANKING_REVISION, "local_files_only": True}]
+    assert model_options[0]["revision"] == RERANKING_REVISION
+    assert model_options[0]["code_revision"] == RERANKING_CODE_REVISION
+    assert model_options[0]["local_files_only"] is True
+    assert model_options[0]["trust_remote_code"] is True
+    assert model_options[0]["torch_dtype"] == "float32"
+    assert adapter.count_pair_tokens("q", "doc") == 3
+    assert adapter.score_pairs("q", ["a", "b", "c"]) == [0.75, 0.75, 0.75]
+    assert batch_sizes == [1, 2, 1]
+
+
+def test_gte_config_must_reference_the_reviewed_code_repo_and_classes(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"num_labels":1,"auto_map":{"AutoConfig":"Alibaba-NLP/new-impl--configuration.NewConfig",'
+        '"AutoModelForSequenceClassification":"Alibaba-NLP/new-impl--modeling.NewForSequenceClassification"}}',
+        encoding="utf-8",
+    )
+
+    reranking_module.verify_model_code_reference(tmp_path)
+
+    config_path.write_text(
+        '{"auto_map":{"AutoConfig":"attacker/model--configuration.BadConfig",'
+        '"AutoModelForSequenceClassification":"Alibaba-NLP/new-impl--modeling.NewForSequenceClassification"}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError):
+        reranking_module.verify_model_code_reference(tmp_path)
+
+    config_path.write_text(
+        '{"num_labels":2,"auto_map":{"AutoConfig":"Alibaba-NLP/new-impl--configuration.NewConfig",'
+        '"AutoModelForSequenceClassification":"Alibaba-NLP/new-impl--modeling.NewForSequenceClassification"}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError):
+        reranking_module.verify_model_code_reference(tmp_path)
+
+
+def test_gte_code_snapshot_hash_mismatch_is_rejected(tmp_path):
+    (tmp_path / "configuration.py").write_text("wrong", encoding="utf-8")
+    (tmp_path / "modeling.py").write_text("wrong", encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        reranking_module.verify_reviewed_code_snapshot(tmp_path)

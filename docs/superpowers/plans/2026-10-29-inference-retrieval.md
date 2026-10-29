@@ -86,13 +86,13 @@
 
 **Interfaces:** Consumes Task 2's shared queue, readiness, error, request-size, and model-metadata helpers; provides `create_reranking_app(adapter_factory=...)` and `/v1/rerank`.
 
-- [ ] Add fake-adapter tests first for score order, deterministic index tie-break, original-index preservation under `top_n`, invalid `top_n`, pair token bounds, missing artifacts, and sanitized output.
-- [ ] Run the named tests and confirm the rerank route/adapter is absent.
-- [ ] Implement fixed GTE pair scoring on CPU with reviewed `trust_remote_code=True` bound to both exact model and code revisions, `local_files_only=True`, and explicit overflow rejection.
-- [ ] Return descending `{index, relevance_score}` signals only; scores are not probabilities, document text is never echoed, and tie order is ascending original index.
-- [ ] Add `ddu-rerank:8080` to the same separate Compose project with alias, read-only cache, CPU/RAM caps, and no inference ports or LLM dependency.
-- [ ] Run focused tests, all existing repository tests/lint/frontend checks, both Compose config validations, and `git diff --check`.
-- [ ] Commit as `feat: add offline CPU reranking worker`.
+- [x] Add fake-adapter tests first for score order, deterministic index tie-break, original-index preservation under `top_n`, invalid `top_n`, pair token bounds, missing artifacts, and sanitized output.
+- [x] Run the named tests and confirm the rerank route/adapter is absent.
+- [x] Implement fixed GTE pair scoring on CPU with reviewed `trust_remote_code=True` bound to both exact model and code revisions, `local_files_only=True`, and explicit overflow rejection.
+- [x] Return descending `{index, relevance_score}` signals only; scores are not probabilities, document text is never echoed, and tie order is ascending original index.
+- [x] Add `ddu-rerank:8080` to the same separate Compose project with alias, read-only cache, CPU/RAM caps, and no inference ports or LLM dependency.
+- [x] Run focused tests, all existing repository tests/lint/frontend checks, both Compose config validations, and `git diff --check`.
+- [x] Commit as `feat: add offline CPU reranking worker`.
 
 ## Deferred by the source specification
 
