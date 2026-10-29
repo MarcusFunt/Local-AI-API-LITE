@@ -2,7 +2,7 @@
 
 **Record date:** 2026-10-29
 **Branch:** `codex/fix-dashboard-runtime-state`
-**Pull requests:** [PR #3](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/3), [PR #4](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/4), and [PR #5](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/5) are merged. [PR #6](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/6) is the open follow-up for runtime-state reconciliation and Task 15 acceptance updates.
+**Pull requests:** [PR #3](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/3), [PR #4](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/4), [PR #5](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/5), and [PR #6](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/6) are merged. PR #6 merged at `b2b76fc`; the latest `main` baseline checked for this record is `b631136`.
 
 ## Current status — 2026-10-29
 
@@ -43,6 +43,10 @@ These checks require a separate operator window. Keep them pending until an oper
 
 | Check | Status | Evidence to record |
 |---|---|---|
+| Controller restart: authenticated session | Pending | Sign in, restart only the dashboard controller, then verify the same valid session remains authenticated and invalidated sessions stay rejected. |
+| Controller restart: selected profile | Pending | Select a validated profile, restart only the dashboard controller, then verify the selected profile is restored. |
+| Controller restart: operation journal | Pending | Complete a harmless control operation in an approved window, restart only the dashboard controller, then verify its bounded journal entry remains available. |
+| Controller restart: desired state | Pending | Verify persisted desired state is reconciled with observed Compose state after a controller restart without changing an already-correct inference state. |
 | Scheduled Task install, sign-in, sign-out, and uninstall | Partial | The current-user task runs from `D:\projects\Local-AI-API-LITE` with Limited run level; the operator manually signed in successfully. Sign-out and a fresh uninstall-preserves-data check remain unverified. |
 | Docker Desktop unavailable and recovery | Pending | Controller remains available, inference state reports `Unknown/Unavailable`, then recovers when Docker becomes available. |
 | Loopback exposure | Verified | Current `Get-NetTCPConnection` output shows only `127.0.0.1:8765`; HTTP liveness is healthy and unauthenticated operational status returns 401. |
@@ -61,7 +65,7 @@ These checks require a separate operator window. Keep them pending until an oper
 - The existing `check_server.py` made only bounded GET requests to `/health` and `/v1/models` from an ephemeral client on `ddu_inference_bus`; it sent no prompts and changed no inference state.
 - No host port was exposed, and no model cache, database, or other persistent volume was removed.
 - PR #3 was merged by the repository owner; Codex did not perform a deployment or publish a release.
-- PR #3, #4, and #5 are merged. PR #6 is the current open follow-up; Codex did not merge, deploy, or publish a release.
+- PR #3 through #6 are merged. PR #6's description still says it is open, but GitHub's current PR state is closed and merged; Codex did not merge, deploy, or publish a release.
 
 ## Historical local acceptance update — 2026-10-29 18:47 Copenhagen
 
@@ -82,3 +86,11 @@ These checks require a separate operator window. Keep them pending until an oper
 - The only listener on port 8765 remained `127.0.0.1`. The Scheduled Task runs as `MARCUS_COMPUTER\marcu` with Limited run level; its serving Python process has working directory `D:\projects\Local-AI-API-LITE\dashboard\backend` and `LOCALAPPDATA=C:\Users\marcu\AppData\Local`.
 - **The operation endpoint and direct SQLite readback disagree.** The expected database at `C:\Users\marcu\AppData\Local\Local-AI-API-LITE\Dashboard\metadata.sqlite3` still contains `desired_state=running`, profile `baseline-8k-4`, `updated_at=1793299406.0` (18:43:26Z), no `dashboard_operations` rows, and zero `admin_account` and active `auth_sessions` rows. The live endpoint subsequently returned successful Stop and Start records with newer timestamps. The process environment, source path helper, and database path used by the shell all point to the same expected data directory, but that does not explain the response mismatch. Root cause is unconfirmed; do not treat administrator/session persistence or desired-state-across-controller-restart as verified.
 - Current container is left running and healthy, matching the pre-test state. The test window did not include Restart, profile apply, failed-profile rollback, benchmarks, dashboard jobs, or database probes. Legacy setup-token files remain ignored by the current tokenless setup flow.
+
+## M0 retrieval baseline — 2026-10-29 22:36 Copenhagen
+
+- Working base: `main` at `b6311366df8896ce356b2dfdaf86cc6690179062`. PR #6 is merged; GitHub reported no open pull requests at the baseline check. The PR body and this document's older status line were stale.
+- Current `compose.yaml` still has one `vllm` service using `vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34`, model `RedHatAI/Qwen3.5-4B-quantized.w4a16` at `7a613872f394578b0b52b683ff4ac47516b4bcaf`, alias `ddu-narrator`, private external network `ddu_inference_bus` with alias `ddu-llm`, and no host-published port.
+- Read-only host snapshot: Windows 11 reports 31.77 GiB visible RAM with 5.77 GiB free. CPU is Intel Core i5-13600K (14 cores / 20 logical processors); one WMI load sample was 9%. WSL2 Ubuntu reported 30,801,056 kB total and 25,727,576 kB available with 20 CPUs. `nvidia-smi` reported RTX 3060 12,288 MiB total, 9,904 MiB device-wide use, and 0% utilization; this does not identify per-process allocation. Docker reported `local-ai-api-lite-vllm-1` healthy on `ddu_inference_bus`, alias `ddu-llm`, with no other container on that network. No retrieval image/container was built or started and no model weights were installed.
+- CPU-only baseline after installing the repository development dependencies in the ignored worktree `.venv`: repository pytest **197 passed**, dashboard pytest **157 passed**, Ruff passed, frontend tests **35 passed**, TypeScript passed, frontend production build passed, `npm ci` reported 0 vulnerabilities, root Compose rendering passed, and LF-normalized YAML lint passed. The first system-Python pytest attempt lacked `argon2`; the isolated environment resolved that setup issue.
+- Host acceptance remains pending for controller-restart state (four rows above), Docker Desktop loss/recovery, cross-user DPAPI, optional test PostgreSQL, and any retrieval-worker readiness, memory, latency, or generator-impact measurement. The recorded Windows and WSL memory views are separate snapshots and are not a resident-worker approval or combined-memory budget.
