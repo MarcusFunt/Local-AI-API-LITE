@@ -45,14 +45,20 @@ def _host_metrics(cache_path=None):
     }
 
 
-def test_controller_health_is_available_when_inference_is_not():
+def test_controller_health_is_available_when_inference_is_not(tmp_path):
     api = load_dashboard_module("api")
 
     class BrokenDocker:
         def read(self):
             raise RuntimeError("Docker unavailable")
 
-    client = AsgiTestClient(api.create_app(docker_reader=BrokenDocker(), telemetry_reader=_host_metrics))
+    client = AsgiTestClient(
+        api.create_app(
+            docker_reader=BrokenDocker(),
+            telemetry_reader=_host_metrics,
+            metadata_path=tmp_path / "metadata.sqlite3",
+        )
+    )
 
     response = client.get("/api/control/v1/controller/health")
 
@@ -60,15 +66,17 @@ def test_controller_health_is_available_when_inference_is_not():
     assert response.json()["status"] == "healthy"
 
 
-def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboard_root):
+def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboard_root, tmp_path):
     api = load_dashboard_module("api")
     client = AsgiTestClient(
         api.create_app(
             docker_reader=HealthyDocker(),
             telemetry_reader=_host_metrics,
             profiles_path=dashboard_root / "dashboard" / "config" / "profiles.yaml",
+            metadata_path=tmp_path / "metadata.sqlite3",
         )
     )
+    client.setup_admin()
 
     response = client.get("/api/control/v1/status")
 
@@ -82,15 +90,17 @@ def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboar
     assert client.post("/api/control/v1/inference/stop").status_code in {404, 405}
 
 
-def test_profiles_endpoint_only_lists_validated_read_only_profiles(dashboard_root):
+def test_profiles_endpoint_only_lists_validated_read_only_profiles(dashboard_root, tmp_path):
     api = load_dashboard_module("api")
     client = AsgiTestClient(
         api.create_app(
             docker_reader=HealthyDocker(),
             telemetry_reader=_host_metrics,
             profiles_path=dashboard_root / "dashboard" / "config" / "profiles.yaml",
+            metadata_path=tmp_path / "metadata.sqlite3",
         )
     )
+    client.setup_admin()
 
     response = client.get("/api/control/v1/profiles")
 
@@ -113,6 +123,7 @@ def test_controller_serves_a_frontend_static_fixture(dashboard_root, tmp_path):
             telemetry_reader=_host_metrics,
             profiles_path=dashboard_root / "dashboard" / "config" / "profiles.yaml",
             frontend_dist=frontend_dist,
+            metadata_path=tmp_path / "metadata.sqlite3",
         )
     )
 
@@ -132,8 +143,10 @@ def test_invalid_profile_registry_returns_a_safe_unavailable_response(dashboard_
             telemetry_reader=_host_metrics,
             profiles_path=registry,
             frontend_dist=dashboard_root / "dashboard" / "frontend" / "dist",
+            metadata_path=tmp_path / "metadata.sqlite3",
         )
     )
+    client.setup_admin()
 
     response = client.get("/api/control/v1/profiles")
 

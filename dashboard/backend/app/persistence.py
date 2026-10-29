@@ -34,6 +34,27 @@ class MetadataStore:
         except (OSError, sqlite3.Error, RuntimePathError):
             raise MetadataStoreError("Dashboard metadata storage is unavailable") from None
 
+    def migrate(self, version: int, statements: list[str]) -> None:
+        if version < 2:
+            raise MetadataStoreError("Dashboard metadata schema is invalid")
+        try:
+            with self.transaction() as connection:
+                current = connection.execute(
+                    "SELECT version FROM schema_version WHERE singleton = 1"
+                ).fetchone()[0]
+                if version <= current:
+                    return
+                if version != current + 1:
+                    raise MetadataStoreError("Dashboard metadata schema is invalid")
+                for statement in statements:
+                    connection.execute(statement)
+                connection.execute(
+                    "UPDATE schema_version SET version = ? WHERE singleton = 1",
+                    (version,),
+                )
+        except sqlite3.Error:
+            raise MetadataStoreError("Dashboard metadata storage is unavailable") from None
+
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None

@@ -36,6 +36,24 @@ def test_schema_upgrade_is_idempotent(tmp_path):
         ).fetchone()[0] == 1
 
 
+def test_schema_migration_is_ordered_and_idempotent(tmp_path):
+    store = MetadataStore(tmp_path / "dashboard.sqlite3")
+    statements = ["CREATE TABLE auth_marker (value TEXT NOT NULL)"]
+
+    store.migrate(2, statements)
+    store.migrate(2, statements)
+
+    with store.transaction() as connection:
+        version = connection.execute(
+            "SELECT version FROM schema_version WHERE singleton = 1"
+        ).fetchone()[0]
+        marker_count = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'auth_marker'"
+        ).fetchone()[0]
+    assert version == 2
+    assert marker_count == 1
+
+
 def test_database_failure_is_reported_without_path_or_sql_leak(tmp_path):
     with pytest.raises(MetadataStoreError) as caught:
         MetadataStore(tmp_path)

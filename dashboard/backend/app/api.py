@@ -6,12 +6,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .auth import AuthService, require_session
 from .docker_status import DockerReader
+from .paths import data_directory
+from .persistence import MetadataStore
 from .profiles import DEFAULT_PROFILES_PATH, load_profiles, public_profile
+from .routes.auth import router as auth_router
 from .telemetry import read_host_telemetry
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -41,12 +45,23 @@ def create_app(
     telemetry_reader: Callable[..., dict[str, Any]] | None = None,
     profiles_path: Path | None = None,
     frontend_dist: Path | None = None,
+    metadata_path: Path | None = None,
+    auth_service: AuthService | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Local-AI-API-LITE Dashboard", version="0.1.0")
+    app = FastAPI(
+        title="Local-AI-API-LITE Dashboard",
+        version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.state.docker_reader = docker_reader or DockerReader(docker_path=shutil.which("docker"))
     app.state.telemetry_reader = telemetry_reader or read_host_telemetry
     app.state.profiles_path = profiles_path or DEFAULT_PROFILES_PATH
     app.state.frontend_dist = frontend_dist or DEFAULT_FRONTEND_DIST
+    store = MetadataStore(metadata_path or data_directory() / "metadata.sqlite3")
+    app.state.auth_service = auth_service or AuthService(store)
+    app.include_router(auth_router)
 
     def docker_snapshot() -> dict[str, Any]:
         try:
@@ -83,7 +98,7 @@ def create_app(
     def controller_health() -> dict[str, str]:
         return {"status": "healthy", "checked_at": _now()}
 
-    @app.get("/api/control/v1/status")
+    @app.get("/api/control/v1/status", dependencies=[Depends(require_session)])
     def status() -> dict[str, Any]:
         docker = docker_snapshot()
         telemetry = telemetry_snapshot(docker.get("cache_path"))
@@ -110,12 +125,12 @@ def create_app(
             "telemetry": telemetry,
         }
 
-    @app.get("/api/control/v1/telemetry")
+    @app.get("/api/control/v1/telemetry", dependencies=[Depends(require_session)])
     def telemetry() -> dict[str, Any]:
         docker = docker_snapshot()
         return {"refreshed_at": _now(), "telemetry": telemetry_snapshot(docker.get("cache_path"))}
 
-    @app.get("/api/control/v1/profiles")
+    @app.get("/api/control/v1/profiles", dependencies=[Depends(require_session)])
     def profiles() -> dict[str, Any]:
         try:
             return {"profiles": [public_profile(profile) for profile in profile_registry()]}
