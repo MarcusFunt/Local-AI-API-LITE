@@ -26,6 +26,19 @@ jobs:
       - name: Install development tools
         run: python -m pip install -r requirements-dev.txt
 
+      - name: Set up Node.js for dashboard checks
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - name: Test and build dashboard frontend
+        run: |
+          npm ci --prefix dashboard/frontend
+          npm --prefix dashboard/frontend test
+          npm --prefix dashboard/frontend run build
+
       - name: Run protocol and configuration tests
         run: python -m pytest -q
 

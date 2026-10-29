@@ -16,5 +16,9 @@ benchmark-output/
 .cache/
 model-cache/
 hf-cache/
+dashboard/backend/.venv/
+*.egg-info/
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
 .superpowers/
 .worktrees/
