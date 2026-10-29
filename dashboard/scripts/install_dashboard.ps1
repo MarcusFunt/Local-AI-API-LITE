@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $TaskName = 'Local-AI-API-LITE Dashboard Controller'
+. (Join-Path $PSScriptRoot 'task_identity.ps1')
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $FrontendDirectory = Join-Path $RepositoryRoot 'dashboard\frontend'
 $BackendDirectory = Join-Path $RepositoryRoot 'dashboard\backend'
@@ -76,7 +77,7 @@ $Settings = New-ScheduledTaskSettingsSet `
 
 $ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($ExistingTask) {
-    if (-not [string]::Equals($ExistingTask.Principal.UserId, $CurrentUser, [StringComparison]::OrdinalIgnoreCase)) {
+    if (-not (Test-TaskPrincipalForCurrentUser -TaskUserId $ExistingTask.Principal.UserId)) {
         throw "The task '$TaskName' belongs to another Windows user; it was left unchanged."
     }
     if ($ExistingTask.State -eq 'Running') {

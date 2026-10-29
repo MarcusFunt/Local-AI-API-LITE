@@ -139,7 +139,7 @@ These checks require a separately authorized operator window. Do not stop, resta
 - [ ] Record NVML availability, host/controller CPU and RAM, and controller startup cost during a normal workload without changing inference.
 - [ ] Verify expected model alias, revision, image digest, no prompt/response collection, and no credential values in status or metadata.
 
-The controller has not been installed or launched for this implementation. The host-level checks above remain pending. Existing Phase 0 values below are historical baseline observations only.
+The current-user Scheduled Task was installed and launched from the stable `D:\projects\Local-AI-API-LITE` checkout on 2026-10-29. Its liveness endpoint and loopback binding were verified; first-run administrator setup is still required. Sign-in/sign-out lifecycle, Docker Desktop loss/recovery, cross-user DPAPI, and live inference loading/rollback checks remain pending. See [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated host evidence. Existing Phase 0 values below are historical baseline observations only.
 
 See [DASHBOARD_SECURITY.md](DASHBOARD_SECURITY.md) for the security boundary and [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated automated evidence and pending operator checks.
 

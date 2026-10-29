@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $TaskName = 'Local-AI-API-LITE Dashboard Controller'
+. (Join-Path $PSScriptRoot 'task_identity.ps1')
 $CurrentUser = (& whoami.exe).Trim()
 $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
@@ -11,7 +12,7 @@ if (-not $Task) {
     return
 }
 
-if (-not [string]::Equals($Task.Principal.UserId, $CurrentUser, [StringComparison]::OrdinalIgnoreCase)) {
+if (-not (Test-TaskPrincipalForCurrentUser -TaskUserId $Task.Principal.UserId)) {
     throw "The task '$TaskName' does not belong to the current Windows user; it was left unchanged."
 }
 
