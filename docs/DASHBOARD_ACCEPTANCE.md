@@ -34,7 +34,7 @@ These checks require a separate operator window. Keep them pending until an oper
 | Docker Desktop unavailable and recovery | Pending | Controller remains available, inference state reports `Unknown/Unavailable`, then recovers when Docker becomes available. |
 | Loopback exposure | Verified | `netstat` showed the controller listening on `127.0.0.1:8765`; the HTTP liveness and protected status endpoints responded locally. |
 | Stable Compose path | Pending | The stable checkout has no `.env`; no Compose root was configured and no credentials were copied. Lifecycle controls therefore remain unavailable. |
-| Inference network and model identity | Partial | Read-only Docker inspection showed the healthy pinned vLLM image digest on `ddu_inference_bus`, the `ddu-llm` alias, and no published ports. Served model revision and `ddu-narrator` response identity still need the operator check. |
+| Inference network and model identity | Partial | Read-only Docker inspection showed the healthy pinned vLLM image digest on `ddu_inference_bus`, the `ddu-llm` alias, and no published ports. The existing bounded `check_server.py` returned the expected `ddu-narrator` model alias over a short-lived, read-only network client. The configured Qwen revision still needs operator verification. |
 | DPAPI access from another Windows user | Pending | The configured user can read its vault; a different user sees a locked vault and cannot decrypt values. |
 | NVML and controller resource cost | Partial | `nvidia-smi` reported device-wide RTX 3060 telemetry (2% utilization, 420/12288 MiB, 37°C, 8.94 W). A 15-second idle sample of the controller listener process measured 0.016% CPU and 47.7 MiB working set. Startup cost and authenticated polling overhead remain unmeasured. |
 | Stop, slow load, failed profile, and rollback | Pending | Desired Stop persists across controller restart; long load remains active; failed candidate restores the verified last-known-good profile without deleting volumes. |
@@ -44,7 +44,8 @@ These checks require a separate operator window. Keep them pending until an oper
 ## Development actions not performed
 
 - The current-user Scheduled Task is installed from the stable `D:\projects\Local-AI-API-LITE` checkout. Installer output was captured locally; the setup token was moved to the current-user-only file above, and raw-token installer logs were sanitized. The token value is not recorded here.
-- No live Compose Start, Stop, Restart, profile switch, job, or database probe was run.
+- No live Compose Start, Stop, Restart, profile switch, benchmark, dashboard job, or database probe was run.
+- The existing `check_server.py` made only bounded GET requests to `/health` and `/v1/models` from an ephemeral client on `ddu_inference_bus`; it sent no prompts and changed no inference state.
 - No host port was exposed, and no model cache, database, or other persistent volume was removed.
 - PR #3 was merged by the repository owner; Codex did not perform a deployment or publish a release.
 - The task-identity fix is a post-merge follow-up in open PR #4; PR #3 remains merged by the repository owner.

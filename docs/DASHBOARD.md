@@ -133,7 +133,7 @@ These checks require a separately authorized operator window. Do not stop, resta
 
 - [ ] Install and uninstall the named task as a standard user; verify the controller runs only after sign-in and stops at sign-out.
 - [ ] Confirm Docker Desktop and the controller use the same Windows account; verify Docker unavailable reports `Unknown` and recovers when Docker is available.
-- [ ] Confirm controller access is loopback-only; verify the model API has no host-published port and remains on `ddu_inference_bus`.
+- [x] Confirm controller access is loopback-only; verify the model API has no host-published port and remains on `ddu_inference_bus`. A bounded GET check also confirmed the `ddu-narrator` model alias; see [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md).
 - [ ] Verify first-run setup, sign-in, reload reauthentication, sign-out, session revocation, password change, recovery, and current-user runtime ACLs.
 - [ ] Verify DPAPI CurrentUser behavior in this account and from a different Windows user; the other user must see a locked vault.
 - [ ] Record NVML availability, host/controller CPU and RAM, and controller startup cost during a normal workload without changing inference.
