@@ -260,7 +260,9 @@ class ActivityGate:
                 return True
             if row[0] == operation_id:
                 return False
-            if row[2] is None or row[2] > now:
+            if row[2] is None and row[3] != "reconciliation_failed":
+                return False
+            if row[2] is not None and row[2] > now:
                 return False
             expired = {
                 "operation_id": row[0],
@@ -278,15 +280,15 @@ class ActivityGate:
             return False
         reconciler = self.expired_lease_reconciler
         if reconciler is None:
-            self._block_if_owned(operation_id)
+            self._block_if_owned(operation_id, expired)
             return False
         try:
             reconciled = reconciler(expired)
         except Exception as exc:  # noqa: BLE001 - adapter failures must not leak local details.
-            self._block_if_owned(operation_id)
+            self._block_if_owned(operation_id, expired)
             raise ActivityGateError(f"Expired activity reconciliation failed ({type(exc).__name__})") from None
         if reconciled is False:
-            self._block_if_owned(operation_id)
+            self._block_if_owned(operation_id, expired)
             return False
         with self.metadata.transaction() as connection:
             row = connection.execute(
@@ -312,6 +314,17 @@ class ActivityGate:
             if cursor.rowcount != 1:
                 raise ActivityGateError("Activity gate lease is no longer owned")
 
+    def require_reconciliation(self, operation_id: str) -> None:
+        """Keep an uncertain activity blocked until its owner is verified safe."""
+        with self.metadata.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE activity_gate SET lease_until = NULL, status = 'reconciliation_failed' "
+                "WHERE singleton = 1 AND operation_id = ? AND status = 'active'",
+                (operation_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ActivityGateError("Activity gate lease is no longer owned")
+
     def release(self, operation_id: str) -> None:
         self._release_if_owned(operation_id)
 
@@ -324,13 +337,20 @@ class ActivityGate:
             return None
         return {"operation_id": row[0], "kind": row[1], "lease_until": row[2], "status": row[3]}
 
-    def _block_if_owned(self, operation_id: str) -> None:
+    def _block_if_owned(self, operation_id: str, previous: dict[str, Any] | None = None) -> None:
         with self.metadata.transaction() as connection:
-            connection.execute(
-                "UPDATE activity_gate SET lease_until = NULL, status = 'reconciliation_failed' "
-                "WHERE singleton = 1 AND operation_id = ?",
-                (operation_id,),
-            )
+            if previous is None:
+                connection.execute(
+                    "UPDATE activity_gate SET lease_until = NULL, status = 'reconciliation_failed' "
+                    "WHERE singleton = 1 AND operation_id = ?",
+                    (operation_id,),
+                )
+            else:
+                connection.execute(
+                    "UPDATE activity_gate SET operation_id = ?, kind = ?, lease_until = NULL, "
+                    "status = 'reconciliation_failed' WHERE singleton = 1 AND operation_id = ?",
+                    (previous["operation_id"], previous["kind"], operation_id),
+                )
 
     def _release_if_owned(self, operation_id: str) -> None:
         with self.metadata.transaction() as connection:
