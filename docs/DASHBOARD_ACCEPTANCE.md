@@ -23,7 +23,7 @@ The implementation checks used mocked Docker and PostgreSQL adapters. No inferen
 | GitHub Actions | Passed | Both `contract-and-config` checks passed on PR #5 head `77217e0`. |
 | Diff whitespace | Passed | `git diff --check` passed before commit `77217e0`. |
 | Windows DPAPI CurrentUser round trip | Passed in focused automated check | Recorded during Task 3 on this Windows host. Cross-user behavior remains pending below. |
-| Local browser/controller session | Partial | The current-user task runs from the stable checkout; the controller health endpoint is healthy, it binds to `127.0.0.1:8765`, and unauthenticated status returns 401. The operator reports submitting a first administrator password and `/auth/state` reports setup is no longer required, but a direct read-only query of the expected per-user `metadata.sqlite3` found no administrator row. Reconcile the live auth database before recording setup persistence or login as passed. |
+| Local browser/controller session | Partial | The operator manually signed in; authenticated Overview rendered protected status and telemetry, and Settings displayed current and other server-reported sessions. The controller binds to `127.0.0.1:8765`; no-cookie protected status returns 401. The expected per-user `metadata.sqlite3` still has zero administrator and active-session rows, so the live auth persistence path remains unreconciled. |
 
 ## Pending Windows-host acceptance
 
@@ -40,7 +40,7 @@ These checks require a separate operator window. Keep them pending until an oper
 | NVML and controller resource cost | Partial | A 15-second idle sample of the current controller on 2026-10-29 observed 0.000 CPU seconds at the process timer's reported resolution and a working set change from 30.11 to 29.90 MiB across 20 logical processors. Authenticated polling cost, startup cost, extended stability, and a current NVML sample remain unmeasured. |
 | Stop, slow load, failed profile, and rollback | Pending | Desired Stop persists across controller restart; long load remains active; failed candidate restores the verified last-known-good profile without deleting volumes. |
 | Optional PostgreSQL probe against an approved test database | Pending | `SELECT 1` succeeds read-only; a failed connection reports a short category and does not change inference status. |
-| First administrator setup and credential reveal/browser storage | Partial | The updated browser serves a password-only setup form, the operator reports choosing a password, and `/auth/state` reports setup complete. The expected metadata database still shows zero admin rows, so persisted setup/login is not verified. Credential reveal and browser-storage checks remain pending. Four legacy setup-token text files remain in `install-output`; the current controller ignores them. |
+| First administrator setup and credential reveal/browser storage | Partial | The password-only setup page was served; the operator chose a password and subsequently signed in successfully. The authenticated Settings page lists sessions, but the expected metadata database has zero administrator/session rows, so the runtime auth database path remains unconfirmed. Credential reveal and browser-storage checks remain pending. Four legacy setup-token text files remain in `install-output`; the current controller ignores them. |
 
 ## Development actions not performed
 
@@ -50,3 +50,13 @@ These checks require a separate operator window. Keep them pending until an oper
 - No host port was exposed, and no model cache, database, or other persistent volume was removed.
 - PR #3 was merged by the repository owner; Codex did not perform a deployment or publish a release.
 - The task-identity fix is a post-merge follow-up in open PR #4; PR #3 remains merged by the repository owner.
+
+## Local acceptance update — 2026-10-29 18:47 Copenhagen
+
+- Administrator browser sign-in: the operator signed in manually at about 18:38 without sharing the password. The authenticated Overview showed inference Ready and protected telemetry. The Settings page later showed a current session and one other active session.
+- Authentication persistence remains unresolved: a direct read-only query of `C:\Users\marcu\AppData\Local\Local-AI-API-LITE\Dashboard\metadata.sqlite3` still found zero `admin_account` rows and zero active `auth_sessions`. A no-cookie `GET /auth/state` returned `setup_required: false` and `authenticated: false`; no-cookie status, telemetry, and profiles requests returned 401. The browser's authenticated session list conflicts with the expected database counts. The live database path has not been confirmed, so do not treat the direct query as proof that the administrator account is absent or its persistence as verified.
+- Controller exposure and resource sample: the only listener on port 8765 was `127.0.0.1`. During a 15-second sample with the dashboard open, the controller process group used 0.047 CPU seconds; summed working set changed from 44.1 MiB to 44.5 MiB.
+- Inference read-only inspection: the dashboard showed Ready, `ddu-narrator`, and Baseline 8K / 4 sequences. ComposeRunner validation against the active worktree succeeded and found one running `vllm` service on `ddu_inference_bus` in `baseline-8k-4`. Docker inspection found one healthy project container, the `ddu-llm` alias, and zero host-published bindings.
+- Stable Compose path: `D:\projects\Local-AI-API-LITE` is the fixed source checkout and contains `compose.yaml`, but no `.env`. The active container is labeled to the separate Codex worktree, which has the `.env`. The local settings file does not exist and `controls_available()` is false. An attempt to create a current-user-only `.env` copy in the stable checkout was rejected by the local execution policy with the result `blocked by policy`; no `.env` or settings file was created or changed. I did not try another route around that policy.
+- No Start, Stop, Restart, profile apply, or rollback operation was run. Although the operator authorized a test window, lifecycle acceptance remains pending until the stable Compose root can be configured. The running inference container and its volumes were left unchanged.
+- Current dashboard backend suite: `dashboard/backend/.venv/Scripts/python.exe -m pytest -q tests` — 156 passed in 31.99 seconds.
