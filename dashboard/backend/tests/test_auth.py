@@ -4,7 +4,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.auth import Argon2PasswordHasher, AuthenticationError, AuthService
+from app.auth import (
+    AdministratorNotConfiguredError,
+    Argon2PasswordHasher,
+    AuthenticationError,
+    AuthService,
+    InvalidCredentialsError,
+    LoginRateLimitedError,
+)
 from app.persistence import MetadataStore
 
 PASSWORD = "Pass1234"
@@ -130,16 +137,22 @@ def test_setup_accepts_eight_character_password_without_symbol(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "password",
-    ["lowercasepassword1", "UPPERCASEPASSWORD1", "PasswordWithoutDigits"],
-    ids=["uppercase-required", "lowercase-required", "number-required"],
+    ("password", "expected"),
+    [
+        ("lowercasepassword1", "at least one uppercase letter"),
+        ("UPPERCASEPASSWORD1", "at least one lowercase letter"),
+        ("PasswordWithoutDigits", "at least one digit"),
+        ("short", "at least 8 characters; at least one uppercase letter; at least one digit"),
+    ],
+    ids=["uppercase-required", "lowercase-required", "number-required", "multiple-rules"],
 )
-def test_setup_rejects_password_missing_a_required_character_class(password, tmp_path):
+def test_setup_rejects_password_with_exact_missing_requirements(password, expected, tmp_path):
     service = _service(tmp_path / "metadata.sqlite3")
     token = service.issue_bootstrap()
 
-    with pytest.raises(AuthenticationError):
+    with pytest.raises(AuthenticationError) as error:
         service.setup(token, password)
+    assert str(error.value) == f"Password does not meet these requirements: {expected}."
 
 
 def test_login_rotates_session_tokens(tmp_path):
@@ -213,24 +226,29 @@ def test_login_rate_limit_survives_app_restart(tmp_path):
     service = _service(database_path)
     _create_admin(service)
     for _ in range(5):
-        with pytest.raises(AuthenticationError):
+        with pytest.raises(InvalidCredentialsError):
             service.login("wrong password", "192.0.2.10")
 
     restarted = _service(database_path)
 
-    with pytest.raises(AuthenticationError, match="Authentication failed"):
+    with pytest.raises(LoginRateLimitedError) as limited:
         restarted.login(PASSWORD, "192.0.2.10")
+    assert str(limited.value) == (
+        "Too many sign-in attempts. The limit is 5 failed attempts in a rolling 15-minute "
+        "window. Wait until an earlier failed attempt is more than 15 minutes old, then try again."
+    )
 
 
-def test_auth_failures_are_generic(tmp_path):
+def test_login_failures_identify_the_account_condition(tmp_path):
     service = _service(tmp_path / "metadata.sqlite3")
-    with pytest.raises(AuthenticationError) as no_account:
+    with pytest.raises(AdministratorNotConfiguredError) as no_account:
         service.login(PASSWORD, "client-without-account")
     _create_admin(service)
-    with pytest.raises(AuthenticationError) as wrong_password:
+    with pytest.raises(InvalidCredentialsError) as wrong_password:
         service.login("incorrect password", "different-client")
 
-    assert str(no_account.value) == str(wrong_password.value) == "Authentication failed"
+    assert str(no_account.value) == "Administrator setup is not complete. Set up the administrator first."
+    assert str(wrong_password.value) == "The administrator password is incorrect. Check it and try again."
 
 
 def test_recovery_token_is_one_use_and_revokes_sessions(tmp_path):

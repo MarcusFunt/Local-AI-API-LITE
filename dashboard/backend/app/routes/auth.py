@@ -7,9 +7,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.auth import (
+    AdministratorNotConfiguredError,
     AuthenticationError,
     AuthService,
     AuthSession,
+    InvalidCredentialsError,
+    LoginRateLimitedError,
     PasswordPolicyError,
     require_csrf,
     require_session,
@@ -81,6 +84,12 @@ def login(body: LoginRequest, request: Request) -> Response:
     client_key = request.client.host if request.client else "unknown"
     try:
         result = _service(request).login(body.password, client_key)
+    except AdministratorNotConfiguredError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except LoginRateLimitedError as error:
+        raise HTTPException(status_code=429, detail=str(error)) from None
+    except InvalidCredentialsError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
     except AuthenticationError:
         raise _auth_failure() from None
 

@@ -54,6 +54,32 @@ class PasswordPolicyError(AuthenticationError):
     """A new password does not meet the administrator password policy."""
 
 
+class InvalidCredentialsError(AuthenticationError):
+    """The supplied administrator password does not match."""
+
+    def __init__(self) -> None:
+        super().__init__("The administrator password is incorrect. Check it and try again.")
+
+
+class LoginRateLimitedError(AuthenticationError):
+    """The client has reached the configured rolling login-failure limit."""
+
+    def __init__(self) -> None:
+        window_minutes = int(LOGIN_WINDOW.total_seconds() // 60)
+        super().__init__(
+            f"Too many sign-in attempts. The limit is {LOGIN_FAILURE_LIMIT} failed attempts "
+            f"in a rolling {window_minutes}-minute window. Wait until an earlier failed "
+            f"attempt is more than {window_minutes} minutes old, then try again."
+        )
+
+
+class AdministratorNotConfiguredError(AuthenticationError):
+    """The login endpoint was reached before an administrator was configured."""
+
+    def __init__(self) -> None:
+        super().__init__("Administrator setup is not complete. Set up the administrator first.")
+
+
 class Argon2PasswordHasher:
     def __init__(self) -> None:
         self._hasher = PasswordHasher()
@@ -202,15 +228,17 @@ class AuthService:
 
     def login(self, password: str, client_key: str) -> LoginResult:
         if self.limiter.is_limited(client_key):
-            raise AuthenticationError()
+            raise LoginRateLimitedError()
         with self.store.transaction() as connection:
             row = connection.execute(
                 "SELECT password_hash FROM admin_account WHERE singleton = 1"
             ).fetchone()
         verifier = row[0] if row is not None else None
-        if verifier is None or not _safe_verify(self.password_hasher, password, verifier):
+        if verifier is None:
+            raise AdministratorNotConfiguredError()
+        if not _safe_verify(self.password_hasher, password, verifier):
             self.limiter.record_failure(client_key)
-            raise AuthenticationError()
+            raise InvalidCredentialsError()
 
         self.limiter.clear(client_key)
         now_dt = _as_utc(self.clock())
@@ -406,17 +434,23 @@ def validate_local_request(request: Request) -> None:
 
 
 def _validate_password(password: str) -> None:
-    if (
-        not isinstance(password, str)
-        or len(password) < 8
-        or len(password) > 256
-        or not any("A" <= character <= "Z" for character in password)
-        or not any("a" <= character <= "z" for character in password)
-        or not any("0" <= character <= "9" for character in password)
-    ):
+    if not isinstance(password, str):
+        issues = ["a text value"]
+    else:
+        issues = []
+        if len(password) < 8:
+            issues.append("at least 8 characters")
+        if len(password) > 256:
+            issues.append("no more than 256 characters")
+        if not any("A" <= character <= "Z" for character in password):
+            issues.append("at least one uppercase letter")
+        if not any("a" <= character <= "z" for character in password):
+            issues.append("at least one lowercase letter")
+        if not any("0" <= character <= "9" for character in password):
+            issues.append("at least one digit")
+    if issues:
         raise PasswordPolicyError(
-            "The password must be 8–256 characters and include at least one uppercase letter, "
-            "one lowercase letter, and one digit. Symbols are optional."
+            "Password does not meet these requirements: " + "; ".join(issues) + "."
         )
 
 

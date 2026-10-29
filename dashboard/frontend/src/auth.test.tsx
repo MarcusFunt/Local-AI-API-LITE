@@ -36,10 +36,11 @@ describe("dashboard authentication", () => {
   });
 
   it.each([
-    ["uppercase letter", "lowercasepassword1"],
-    ["lowercase letter", "UPPERCASEPASSWORD1"],
-    ["number", "PasswordWithoutDigits"],
-  ])("requires a %s for setup passwords", (_requirement, value) => {
+    ["uppercase letter", "lowercasepassword1", "at least one uppercase letter"],
+    ["lowercase letter", "UPPERCASEPASSWORD1", "at least one lowercase letter"],
+    ["number", "PasswordWithoutDigits", "at least one digit"],
+    ["length, uppercase letter, and number", "short", "at least 8 characters; at least one uppercase letter; at least one digit"],
+  ])("explains the missing setup password rule(s): %s", (_requirement, value, missingRules) => {
     render(
       <AuthPage
         mode="setup-required"
@@ -55,6 +56,7 @@ describe("dashboard authentication", () => {
     fireEvent.change(password, { target: { value } });
 
     expect(password.checkValidity()).toBe(false);
+    expect(password.title).toBe(`Password does not meet these requirements: ${missingRules}.`);
   });
 
   it("allows an eight-character password in the sign-in field", () => {
@@ -70,7 +72,7 @@ describe("dashboard authentication", () => {
     );
     const password = screen.getByLabelText("Administrator password") as HTMLInputElement;
 
-    fireEvent.change(password, { target: { value: "Abcd1234" } });
+    fireEvent.change(password, { target: { value: "pw" } });
 
     expect(password.checkValidity()).toBe(true);
   });
@@ -118,7 +120,7 @@ describe("dashboard authentication", () => {
 
   it.each([
     [401, "The setup token was not accepted. Copy the current token and try again."],
-    [422, "The password must include uppercase, lowercase, and a number."],
+    [422, "Password does not meet these requirements: at least one uppercase letter; at least one digit."],
   ])("shows the setup server explanation for status %s", async (status, message) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail: message }, status));
 
@@ -141,12 +143,22 @@ describe("dashboard authentication", () => {
     expect(screen.getByRole("alert").textContent).toContain("setup token was not accepted");
   });
 
-  it("keeps sign-in failures generic even when the server provides a detail", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse({ detail: "Private sign-in detail" }, 401),
-    );
+  it.each([
+    [401, "The administrator password is incorrect. Check it and try again."],
+    [429, "Too many sign-in attempts. The limit is 5 failed attempts in a rolling 15-minute window."],
+  ])("shows the sign-in explanation returned by the server for status %s", async (status, detail) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail }, status));
 
     await expect(createAuthClient(fetcher).login("Password123"))
+      .rejects.toThrow(detail);
+  });
+
+  it("keeps unrelated authentication errors generic", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ detail: "Private password-change detail" }, 401),
+    );
+
+    await expect(createAuthClient(fetcher).changePassword("csrf", "old", "new"))
       .rejects.toThrow("Authentication failed");
   });
 

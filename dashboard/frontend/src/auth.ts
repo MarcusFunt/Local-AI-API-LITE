@@ -9,6 +9,23 @@ export const ADMIN_PASSWORD_PATTERN = "(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,256}
 export const ADMIN_PASSWORD_HINT =
   "Use 8–256 characters, including uppercase, lowercase, and a number. Symbols are optional.";
 
+export function adminPasswordIssues(password: string): string[] {
+  const issues: string[] = [];
+  if (password.length < 8) issues.push("at least 8 characters");
+  if (password.length > 256) issues.push("no more than 256 characters");
+  if (!/[A-Z]/.test(password)) issues.push("at least one uppercase letter");
+  if (!/[a-z]/.test(password)) issues.push("at least one lowercase letter");
+  if (!/[0-9]/.test(password)) issues.push("at least one digit");
+  return issues;
+}
+
+export function adminPasswordValidationTitle(password: string): string {
+  const issues = adminPasswordIssues(password);
+  return issues.length
+    ? `Password does not meet these requirements: ${issues.join("; ")}.`
+    : ADMIN_PASSWORD_HINT;
+}
+
 export interface SessionMetadata {
   id: string;
   created_at: string;
@@ -37,6 +54,22 @@ export class AuthRequestError extends Error {
   }
 }
 
+function errorFallback(path: string, status: number): string {
+  if (path === "/auth/setup" && status === 401) {
+    return "The setup token was not accepted. Check that it is current and unused.";
+  }
+  if (path === "/auth/setup" && status === 422) return ADMIN_PASSWORD_HINT;
+  if (path === "/auth/login" && status === 401) {
+    return "The administrator password is incorrect. Check it and try again.";
+  }
+  if (path === "/auth/login" && status === 429) {
+    return "Too many sign-in attempts. The limit is 5 failed attempts in a rolling 15-minute window. " +
+      "Wait until an earlier failed attempt is more than 15 minutes old, then try again.";
+  }
+  if (status === 401) return "Authentication failed";
+  return `Dashboard request failed (${status})`;
+}
+
 export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
   async function request<T>(
     path: string,
@@ -56,8 +89,8 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      let setupDetail: string | null = null;
-      if (path === "/auth/setup") {
+      let actionableDetail: string | null = null;
+      if (path === "/auth/setup" || path === "/auth/login") {
         try {
           const payload: unknown = await response.json();
           if (
@@ -66,21 +99,13 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
             "detail" in payload &&
             typeof payload.detail === "string"
           ) {
-            setupDetail = payload.detail;
+            actionableDetail = payload.detail;
           }
         } catch {
-          // Keep the setup-specific fallback when the response is not JSON.
+          // Keep the endpoint-specific fallback when the response is not JSON.
         }
       }
-      const message = setupDetail ?? (
-        path === "/auth/setup" && response.status === 401
-          ? "The setup token was not accepted. Check that it is current and unused."
-          : path === "/auth/setup" && response.status === 422
-            ? ADMIN_PASSWORD_HINT
-            : response.status === 401
-              ? "Authentication failed"
-              : `Dashboard request failed (${response.status})`
-      );
+      const message = actionableDetail ?? errorFallback(path, response.status);
       throw new AuthRequestError(message, response.status);
     }
     if (response.status === 204) return undefined as T;

@@ -42,8 +42,8 @@ def test_setup_reports_password_policy_and_keeps_token_available(tmp_path):
 
     assert rejected.status_code == 422
     assert rejected.json() == {
-        "detail": "The password must be 8–256 characters and include at least one uppercase letter, "
-        "one lowercase letter, and one digit. Symbols are optional."
+        "detail": "Password does not meet these requirements: at least 8 characters; "
+        "at least one uppercase letter; at least one digit."
     }
     assert client.get("/auth/state").json()["setup_required"] is True
 
@@ -83,6 +83,44 @@ def test_login_sets_rotating_http_only_same_site_cookie(tmp_path):
     assert "samesite=lax" in set_cookie
     assert "secure" not in set_cookie
     assert second.json()["csrf_token"]
+
+
+def test_login_explains_when_administrator_setup_is_incomplete(tmp_path):
+    client = _client(tmp_path)
+
+    response = client.post("/auth/login", json_body={"password": PASSWORD})
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Administrator setup is not complete. Set up the administrator first."
+    }
+
+
+def test_login_explains_password_mismatch(tmp_path):
+    client = _client(tmp_path)
+    client.setup_admin(PASSWORD)
+
+    response = client.post("/auth/login", json_body={"password": "WrongPass123"})
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "The administrator password is incorrect. Check it and try again."
+    }
+
+
+def test_login_explains_the_exact_rate_limit(tmp_path):
+    client = _client(tmp_path)
+    client.setup_admin(PASSWORD)
+    for _ in range(5):
+        assert client.post("/auth/login", json_body={"password": "WrongPass123"}).status_code == 401
+
+    response = client.post("/auth/login", json_body={"password": PASSWORD})
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "detail": "Too many sign-in attempts. The limit is 5 failed attempts in a rolling 15-minute "
+        "window. Wait until an earlier failed attempt is more than 15 minutes old, then try again."
+    }
 
 
 def test_secure_cookie_is_set_for_https(tmp_path):
