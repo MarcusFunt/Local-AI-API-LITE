@@ -18,6 +18,8 @@ The installer builds the frontend, creates `dashboard/backend/.venv`, installs t
 
 On first installation, the script prints the one-time setup token to the local installation console. Open <http://127.0.0.1:8765>, submit the token, and choose a permanent administrator password. The token expires after 30 minutes, is single-use, and is stored only as a digest. Re-running the installer after an administrator is configured does not issue a setup token.
 
+Administrator setup, password recovery, and password changes require 8–256 characters, including at least one uppercase letter, one lowercase letter, and one digit. Symbols are optional.
+
 Remove the current user's task and its controller process without deleting runtime data:
 
 ```powershell

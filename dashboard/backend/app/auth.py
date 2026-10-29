@@ -402,7 +402,14 @@ def validate_local_request(request: Request) -> None:
 
 
 def _validate_password(password: str) -> None:
-    if not isinstance(password, str) or len(password) < 12 or len(password) > 256:
+    if (
+        not isinstance(password, str)
+        or len(password) < 8
+        or len(password) > 256
+        or not any("A" <= character <= "Z" for character in password)
+        or not any("a" <= character <= "z" for character in password)
+        or not any("0" <= character <= "9" for character in password)
+    ):
         raise AuthenticationError()
 
 
