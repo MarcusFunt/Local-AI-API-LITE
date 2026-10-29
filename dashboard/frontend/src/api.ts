@@ -102,13 +102,21 @@ export interface TelemetrySample {
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
     headers: { Accept: "application/json" },
+    credentials: "same-origin",
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
-    throw new Error(`Dashboard API returned ${response.status}`);
+    throw new ApiRequestError(response.status);
   }
   return (await response.json()) as T;
+}
+
+export class ApiRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`Dashboard API returned ${status}`);
+    this.name = "ApiRequestError";
+  }
 }
 
 export function getStatus(): Promise<DashboardStatus> {

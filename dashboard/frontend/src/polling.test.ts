@@ -3,6 +3,53 @@ import { describe, expect, it, vi } from "vitest";
 import { startDashboardPolling } from "./polling";
 
 describe("dashboard polling", () => {
+  it("backs off while hidden and schedules visible samples every five seconds", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    let listener: (() => void) | undefined;
+    let nextTimerId = 1;
+    const timers = new Map<number, { callback: () => void; delay: number }>();
+    const schedule = vi.fn((callback: () => void, delay: number) => {
+      const id = nextTimerId++;
+      timers.set(id, { callback, delay });
+      return id;
+    });
+    const cancel = vi.fn((id: number) => timers.delete(id));
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const stop = startDashboardPolling({
+      refresh,
+      onError: vi.fn(),
+      getVisibilityState: () => visibility,
+      subscribeVisibility: (callback) => {
+        listener = callback;
+        return () => {
+          listener = undefined;
+        };
+      },
+      schedule,
+      cancel,
+      nextDelay: () => (visibility === "hidden" ? 30_000 : 5_000),
+      hiddenDelay: 30_000,
+    });
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect([...timers.values()].map((timer) => timer.delay)).toEqual([30_000]);
+    const [hiddenId, hiddenTimer] = [...timers.entries()][0];
+    timers.delete(hiddenId);
+    hiddenTimer.callback();
+    expect(refresh).not.toHaveBeenCalled();
+    expect([...timers.values()].map((timer) => timer.delay)).toEqual([30_000]);
+
+    visibility = "visible";
+    listener?.();
+    expect(refresh).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect([...timers.values()].map((timer) => timer.delay)).toEqual([5_000]);
+
+    stop();
+    expect(timers.size).toBe(0);
+  });
+
   it("keeps one request and one timer when visibility returns during an in-flight refresh", async () => {
     let visibility: DocumentVisibilityState = "visible";
     let listener: (() => void) | undefined;
