@@ -56,7 +56,7 @@ export class AuthRequestError extends Error {
 
 function errorFallback(path: string, status: number): string {
   if (path === "/auth/setup" && status === 401) {
-    return "The setup token was not accepted. Check that it is current and unused.";
+    return "The setup token was not accepted. Make sure it is current and copy the full value from this dashboard's setup-token.txt.";
   }
   if (path === "/auth/setup" && status === 422) return ADMIN_PASSWORD_HINT;
   if (path === "/auth/login" && status === 401) {
@@ -122,7 +122,7 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
         : { kind: "logged-out" };
     },
     async setup(token, password) {
-      await request<void>("/auth/setup", "POST", { token, password });
+      await request<void>("/auth/setup", "POST", { token: token.trim(), password });
     },
     async login(password) {
       const result = await request<{ csrf_token: string; expires_at: string }>(

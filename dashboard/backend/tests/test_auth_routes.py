@@ -61,10 +61,52 @@ def test_setup_reports_when_setup_token_is_not_accepted(tmp_path):
 
     assert rejected.status_code == 401
     assert rejected.json() == {
-        "detail": "The setup token was not accepted. It may be expired or already used; "
-        "copy the current token from setup-token.txt and try again."
+        "detail": "This setup token does not match a token issued by the currently running dashboard. "
+        "Open this dashboard's setup-token.txt and copy the full value."
     }
     assert client.get("/auth/state").json()["setup_required"] is True
+
+
+def test_setup_accepts_token_with_copy_paste_whitespace(tmp_path):
+    client = _client(tmp_path)
+    token = client.app.state.auth_service.issue_bootstrap()
+
+    accepted = client.post(
+        "/auth/setup",
+        json_body={"token": f" \r\n{token}\t ", "password": PASSWORD},
+    )
+
+    assert accepted.status_code == 204
+    assert client.get("/auth/state").json()["setup_required"] is False
+
+
+def test_setup_explains_expired_token(tmp_path):
+    client = _client(tmp_path)
+    service = client.app.state.auth_service
+    token = service.issue_bootstrap()
+    with service.store.transaction() as connection:
+        connection.execute("UPDATE auth_tokens SET expires_at = ?", ("2000-01-01T00:00:00Z",))
+
+    rejected = client.post("/auth/setup", json_body={"token": token, "password": PASSWORD})
+
+    assert rejected.status_code == 401
+    assert rejected.json() == {
+        "detail": "This setup token has expired. Generate a new one-time setup token."
+    }
+
+
+def test_setup_explains_already_used_token(tmp_path):
+    client = _client(tmp_path)
+    service = client.app.state.auth_service
+    old_token = service.issue_bootstrap()
+    service.issue_bootstrap()
+
+    rejected = client.post("/auth/setup", json_body={"token": old_token, "password": PASSWORD})
+
+    assert rejected.status_code == 401
+    assert rejected.json() == {
+        "detail": "This setup token has already been used. Use the administrator sign-in form."
+    }
 
 
 def test_login_sets_rotating_http_only_same_site_cookie(tmp_path):

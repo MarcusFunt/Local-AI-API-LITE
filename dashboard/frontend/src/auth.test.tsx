@@ -106,7 +106,7 @@ describe("dashboard authentication", () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const client = createAuthClient(fetcher);
 
-    await client.setup("one-time-setup-token", "a-long-setup-password");
+    await client.setup(" \r\none-time-setup-token\t ", "a-long-setup-password");
 
     const request = fetcher.mock.calls[0][1];
     expect(JSON.parse(String(request?.body))).toEqual({
@@ -119,7 +119,7 @@ describe("dashboard authentication", () => {
   });
 
   it.each([
-    [401, "The setup token was not accepted. Copy the current token and try again."],
+    [401, "This setup token does not match a token issued by the currently running dashboard."],
     [422, "Password does not meet these requirements: at least one uppercase letter; at least one digit."],
   ])("shows the setup server explanation for status %s", async (status, message) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail: message }, status));

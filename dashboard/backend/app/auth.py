@@ -54,6 +54,37 @@ class PasswordPolicyError(AuthenticationError):
     """A new password does not meet the administrator password policy."""
 
 
+class SetupTokenNotRecognizedError(AuthenticationError):
+    """The setup token was not issued by this dashboard installation."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This setup token does not match a token issued by the currently running dashboard. "
+            "Open this dashboard's setup-token.txt and copy the full value."
+        )
+
+
+class SetupTokenExpiredError(AuthenticationError):
+    """The setup token is past its expiration time."""
+
+    def __init__(self) -> None:
+        super().__init__("This setup token has expired. Generate a new one-time setup token.")
+
+
+class SetupTokenUsedError(AuthenticationError):
+    """The setup token has already been consumed."""
+
+    def __init__(self) -> None:
+        super().__init__("This setup token has already been used. Use the administrator sign-in form.")
+
+
+class AdministratorAlreadyConfiguredError(AuthenticationError):
+    """Initial setup was completed before this request."""
+
+    def __init__(self) -> None:
+        super().__init__("Administrator setup is already complete. Sign in instead.")
+
+
 class InvalidCredentialsError(AuthenticationError):
     """The supplied administrator password does not match."""
 
@@ -200,6 +231,7 @@ class AuthService:
 
     def setup(self, token: str, password: str) -> None:
         _validate_password(password)
+        token = token.strip()
         now = _format_time(_as_utc(self.clock()))
         with self.store.transaction() as connection:
             exists = connection.execute("SELECT 1 FROM admin_account WHERE singleton = 1").fetchone()
@@ -207,14 +239,14 @@ class AuthService:
                 "SELECT purpose, expires_at, consumed_at FROM auth_tokens WHERE token_digest = ?",
                 (_digest(token),),
             ).fetchone()
-            if (
-                exists is not None
-                or token_row is None
-                or token_row[0] != "setup"
-                or token_row[2] is not None
-                or token_row[1] <= now
-            ):
-                raise AuthenticationError()
+            if exists is not None:
+                raise AdministratorAlreadyConfiguredError()
+            if token_row is None or token_row[0] != "setup":
+                raise SetupTokenNotRecognizedError()
+            if token_row[2] is not None:
+                raise SetupTokenUsedError()
+            if token_row[1] <= now:
+                raise SetupTokenExpiredError()
             verifier = _safe_hash(self.password_hasher, password)
             connection.execute(
                 "INSERT INTO admin_account (singleton, password_hash, created_at, updated_at) "

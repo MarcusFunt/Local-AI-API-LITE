@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.auth import (
+    AdministratorAlreadyConfiguredError,
     AdministratorNotConfiguredError,
     AuthenticationError,
     AuthService,
@@ -14,6 +15,9 @@ from app.auth import (
     InvalidCredentialsError,
     LoginRateLimitedError,
     PasswordPolicyError,
+    SetupTokenExpiredError,
+    SetupTokenNotRecognizedError,
+    SetupTokenUsedError,
     require_csrf,
     require_session,
     validate_local_request,
@@ -67,13 +71,18 @@ def setup(body: SetupRequest, request: Request) -> Response:
         _service(request).setup(body.token, body.password)
     except PasswordPolicyError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
+    except AdministratorAlreadyConfiguredError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except SetupTokenExpiredError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
+    except SetupTokenUsedError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
+    except SetupTokenNotRecognizedError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
     except AuthenticationError:
         raise HTTPException(
             status_code=401,
-            detail=(
-                "The setup token was not accepted. It may be expired or already used; "
-                "copy the current token from setup-token.txt and try again."
-            ),
+            detail="Administrator setup could not be completed. Refresh the dashboard and try again.",
         ) from None
     return Response(status_code=204)
 
