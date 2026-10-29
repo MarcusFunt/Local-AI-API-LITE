@@ -109,6 +109,22 @@ class ControlStateStore:
                 params,
             )
 
+    def adopt_runtime_profile_if_pristine(self, profile_id: str) -> bool:
+        """Adopt an externally started profile only before dashboard control was used."""
+        adopted = False
+        with self.metadata.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE dashboard_control_state SET desired_state = 'running', "
+                "selected_profile_id = ?, active_profile_id = ?, updated_at = ? "
+                "WHERE singleton = 1 AND desired_state = 'stopped' "
+                "AND selected_profile_id IS NULL AND active_profile_id IS NULL "
+                "AND last_known_good_profile_id IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM dashboard_operations)",
+                (profile_id, profile_id, time.time()),
+            )
+            adopted = cursor.rowcount == 1
+        return adopted
+
     def create_operation(
         self,
         *,
@@ -496,7 +512,24 @@ class OperationCoordinator:
         try:
             runtime = self.runner.inspect_project()
             runtime_state = self._runtime_state(runtime)
-            desired = self.control_state.get_control_state()["desired_state"]
+            state = self.control_state.get_control_state()
+            observed_profile = runtime.get("active_profile_id")
+            if (
+                runtime_state == "running"
+                and state["desired_state"] == "stopped"
+                and state["selected_profile_id"] is None
+                and state["active_profile_id"] is None
+                and state["last_known_good_profile_id"] is None
+                and isinstance(observed_profile, str)
+            ):
+                try:
+                    self._require_profile(observed_profile)
+                except UnknownProfileError:
+                    pass
+                else:
+                    self.control_state.adopt_runtime_profile_if_pristine(observed_profile)
+                state = self.control_state.get_control_state()
+            desired = state["desired_state"]
             matches = (
                 runtime_state in {"absent", "exited", "dead"}
                 if desired == "stopped"
