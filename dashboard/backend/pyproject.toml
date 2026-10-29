@@ -12,6 +12,7 @@ dependencies = [
   "argon2-cffi>=23.1,<26",
   "cryptography>=45,<51",
   "psutil>=6,<8",
+  "psycopg[binary]>=3.2,<4",
   "PyYAML>=6,<7",
   "uvicorn>=0.30,<1",
 ]

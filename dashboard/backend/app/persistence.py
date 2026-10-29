@@ -23,6 +23,15 @@ JOB_SCHEMA = [
     "CREATE INDEX dashboard_jobs_recent ON dashboard_jobs (created_at DESC, job_id)",
 ]
 
+DATABASE_SCHEMA = [
+    (
+        "CREATE TABLE dashboard_database_status ("
+        "database_id TEXT PRIMARY KEY, state TEXT NOT NULL "
+        "CHECK (state IN ('Available', 'Unavailable')), checked_at TEXT NOT NULL, "
+        "latency_ms INTEGER NOT NULL, failure_category TEXT)"
+    ),
+]
+
 
 class MetadataStore:
     def __init__(self, path: Path) -> None:
