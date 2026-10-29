@@ -35,7 +35,8 @@ def test_install_script_binds_only_loopback_and_does_not_start_inference():
     assert "0.0.0.0" not in script
     assert "docker compose" not in script.casefold()
     assert "compose up" not in script.casefold()
-    assert "app.bootstrap issue-token" in script
+    assert "setup token" not in script.casefold()
+    assert "issue-token" not in script
 
 
 def test_uninstall_script_removes_task_but_preserves_runtime_data():

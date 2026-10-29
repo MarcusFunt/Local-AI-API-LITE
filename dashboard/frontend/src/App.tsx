@@ -211,10 +211,10 @@ export function App({ authClient = defaultAuthClient }: { authClient?: AuthClien
     return () => { cancelled = true; };
   }, [authClient]);
 
-  const handleSetup = async (token: string, password: string) => {
+  const handleSetup = async (password: string) => {
     setAuthError(null);
     try {
-      await authClient.setup(token, password);
+      await authClient.setup(password);
       setAuthState({ kind: "logged-out" });
       setAuthNotice("Administrator password set. Sign in to continue.");
     } catch (cause) {

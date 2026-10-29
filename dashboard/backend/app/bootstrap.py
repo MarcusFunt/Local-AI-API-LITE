@@ -14,21 +14,14 @@ def _service() -> AuthService:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Manage local dashboard administrator tokens")
+    parser = argparse.ArgumentParser(description="Manage local dashboard administrator recovery")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("issue-token", help="issue a one-time initial setup token")
     commands.add_parser("recover-admin", help="revoke sessions and issue a one-time recovery token")
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
 
     try:
         service = _service()
-        if args.command == "issue-token":
-            if not service.is_setup_required():
-                print("Dashboard administrator is already configured; no setup token was issued.", file=sys.stderr)
-                return 2
-            token = service.issue_bootstrap()
-        else:
-            token = service.issue_recovery()
+        token = service.issue_recovery()
     except AuthenticationError:
         print("Dashboard administrator token could not be issued.", file=sys.stderr)
         return 2

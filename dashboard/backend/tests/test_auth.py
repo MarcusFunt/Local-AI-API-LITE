@@ -65,28 +65,42 @@ def _service(path, *, clock=None, hasher=None) -> AuthService:
 
 
 def _create_admin(service: AuthService) -> None:
-    service.setup(service.issue_bootstrap(), PASSWORD)
+    service.setup(PASSWORD)
 
 
-def test_bootstrap_token_is_unique_and_single_use(tmp_path):
+def test_initial_setup_sets_password_without_a_token_and_is_single_use(tmp_path):
     service = _service(tmp_path / "metadata.sqlite3")
-    first = service.issue_bootstrap()
-    second = service.issue_bootstrap()
+    service.setup(PASSWORD)
 
-    assert first != second
-    with pytest.raises(AuthenticationError):
-        service.setup(first, PASSWORD)
-    service.setup(second, PASSWORD)
-    with pytest.raises(AuthenticationError):
-        service.setup(second, PASSWORD)
+    assert service.login(PASSWORD, "127.0.0.1")
+    with pytest.raises(AuthenticationError, match="Administrator setup is already complete"):
+        service.setup("DifferentPass123")
 
 
-def test_invalid_bootstrap_token_does_not_hash_candidate_password(tmp_path):
+def test_initial_setup_ignores_and_removes_legacy_setup_token_rows(tmp_path):
+    service = _service(tmp_path / "metadata.sqlite3")
+    with service.store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO auth_tokens (token_digest, purpose, created_at, expires_at) "
+            "VALUES (?, 'setup', ?, ?)",
+            ("a" * 64, "2026-10-29T12:00:00Z", "2026-10-29T12:30:00Z"),
+        )
+
+    service.setup(PASSWORD)
+
+    with service.store.transaction() as connection:
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM auth_tokens WHERE purpose = 'setup'"
+        ).fetchone()[0]
+    assert remaining == 0
+
+
+def test_setup_rejects_invalid_password_without_hashing_it(tmp_path):
     hasher = CountingPasswordHasher()
     service = _service(tmp_path / "metadata.sqlite3", hasher=hasher)
 
-    with pytest.raises(AuthenticationError):
-        service.setup("invalid-token", PASSWORD)
+    with pytest.raises(AuthenticationError, match="at least 8 characters"):
+        service.setup("short")
 
     assert hasher.hash_calls == 0
 
@@ -108,30 +122,22 @@ def test_setup_requires_new_password_and_creates_argon2id_verifier(tmp_path):
         tmp_path / "metadata.sqlite3",
         hasher=Argon2PasswordHasher(),
     )
-    token = service.issue_bootstrap()
-
     with pytest.raises(AuthenticationError):
-        service.setup(token, "short")
+        service.setup("short")
 
-    service.setup(token, PASSWORD)
+    service.setup(PASSWORD)
     with service.store.transaction() as connection:
         verifier = connection.execute(
             "SELECT password_hash FROM admin_account WHERE singleton = 1"
         ).fetchone()[0]
-        saved_values = " ".join(str(value) for row in connection.execute(
-            "SELECT * FROM auth_tokens"
-        ) for value in row)
 
     assert verifier.startswith("$argon2id$")
     assert PASSWORD not in verifier
-    assert token not in saved_values
 
 
 def test_setup_accepts_eight_character_password_without_symbol(tmp_path):
     service = _service(tmp_path / "metadata.sqlite3")
-    token = service.issue_bootstrap()
-
-    service.setup(token, "Abcd1234")
+    service.setup("Abcd1234")
 
     assert service.login("Abcd1234", "127.0.0.1")
 
@@ -148,10 +154,8 @@ def test_setup_accepts_eight_character_password_without_symbol(tmp_path):
 )
 def test_setup_rejects_password_with_exact_missing_requirements(password, expected, tmp_path):
     service = _service(tmp_path / "metadata.sqlite3")
-    token = service.issue_bootstrap()
-
     with pytest.raises(AuthenticationError) as error:
-        service.setup(token, password)
+        service.setup(password)
     assert str(error.value) == f"Password does not meet these requirements: {expected}."
 
 

@@ -54,30 +54,6 @@ class PasswordPolicyError(AuthenticationError):
     """A new password does not meet the administrator password policy."""
 
 
-class SetupTokenNotRecognizedError(AuthenticationError):
-    """The setup token was not issued by this dashboard installation."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "This setup token does not match a token issued by the currently running dashboard. "
-            "Open this dashboard's setup-token.txt and copy the full value."
-        )
-
-
-class SetupTokenExpiredError(AuthenticationError):
-    """The setup token is past its expiration time."""
-
-    def __init__(self) -> None:
-        super().__init__("This setup token has expired. Generate a new one-time setup token.")
-
-
-class SetupTokenUsedError(AuthenticationError):
-    """The setup token has already been consumed."""
-
-    def __init__(self) -> None:
-        super().__init__("This setup token has already been used. Use the administrator sign-in form.")
-
-
 class AdministratorAlreadyConfiguredError(AuthenticationError):
     """Initial setup was completed before this request."""
 
@@ -202,11 +178,6 @@ class AuthService:
             count = connection.execute("SELECT COUNT(*) FROM admin_account").fetchone()[0]
         return count == 0
 
-    def issue_bootstrap(self) -> str:
-        if not self.is_setup_required():
-            raise AuthenticationError()
-        return self._issue_local_token("setup")
-
     def issue_recovery(self) -> str:
         now = _format_time(_as_utc(self.clock()))
         token = self._new_token()
@@ -229,24 +200,13 @@ class AuthService:
             )
         return token
 
-    def setup(self, token: str, password: str) -> None:
+    def setup(self, password: str) -> None:
         _validate_password(password)
-        token = token.strip()
         now = _format_time(_as_utc(self.clock()))
         with self.store.transaction() as connection:
             exists = connection.execute("SELECT 1 FROM admin_account WHERE singleton = 1").fetchone()
-            token_row = connection.execute(
-                "SELECT purpose, expires_at, consumed_at FROM auth_tokens WHERE token_digest = ?",
-                (_digest(token),),
-            ).fetchone()
             if exists is not None:
                 raise AdministratorAlreadyConfiguredError()
-            if token_row is None or token_row[0] != "setup":
-                raise SetupTokenNotRecognizedError()
-            if token_row[2] is not None:
-                raise SetupTokenUsedError()
-            if token_row[1] <= now:
-                raise SetupTokenExpiredError()
             verifier = _safe_hash(self.password_hasher, password)
             connection.execute(
                 "INSERT INTO admin_account (singleton, password_hash, created_at, updated_at) "
@@ -254,8 +214,7 @@ class AuthService:
                 (verifier, now, now),
             )
             connection.execute(
-                "UPDATE auth_tokens SET consumed_at = ? WHERE token_digest = ?",
-                (now, _digest(token)),
+                "DELETE FROM auth_tokens WHERE purpose = 'setup'",
             )
 
     def login(self, password: str, client_key: str) -> LoginResult:
@@ -402,22 +361,6 @@ class AuthService:
 
     def csrf_matches(self, session: AuthSession, token: str | None) -> bool:
         return bool(token) and hmac.compare_digest(session.csrf_digest, _digest(token))
-
-    def _issue_local_token(self, purpose: str) -> str:
-        token = self._new_token()
-        now_dt = _as_utc(self.clock())
-        now = _format_time(now_dt)
-        with self.store.transaction() as connection:
-            connection.execute(
-                "UPDATE auth_tokens SET consumed_at = ? WHERE purpose = ? AND consumed_at IS NULL",
-                (now, purpose),
-            )
-            connection.execute(
-                "INSERT INTO auth_tokens (token_digest, purpose, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?)",
-                (_digest(token), purpose, now, _format_time(now_dt + TOKEN_LIFETIME)),
-            )
-        return token
 
     def _new_token(self) -> str:
         return self.token_factory(32)

@@ -35,7 +35,7 @@ export interface SessionMetadata {
 
 export interface AuthClient {
   readState(): Promise<Exclude<AuthState, AuthenticatedState>>;
-  setup(token: string, password: string): Promise<void>;
+  setup(password: string): Promise<void>;
   login(password: string): Promise<AuthenticatedState>;
   recovery(token: string, newPassword: string): Promise<void>;
   logout(csrfToken: string): Promise<void>;
@@ -55,10 +55,10 @@ export class AuthRequestError extends Error {
 }
 
 function errorFallback(path: string, status: number): string {
-  if (path === "/auth/setup" && status === 401) {
-    return "The setup token was not accepted. Make sure it is current and copy the full value from this dashboard's setup-token.txt.";
-  }
   if (path === "/auth/setup" && status === 422) return ADMIN_PASSWORD_HINT;
+  if (path === "/auth/setup" && status === 409) {
+    return "Administrator setup is already complete. Sign in instead.";
+  }
   if (path === "/auth/login" && status === 401) {
     return "The administrator password is incorrect. Check it and try again.";
   }
@@ -115,14 +115,14 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
   return {
     async readState() {
       const state = await request<{ setup_required: boolean; authenticated: boolean }>("/auth/state");
-      // A page reload cannot restore the one-time CSRF token, which is kept only in memory.
+      // A page reload cannot restore the CSRF token, which is kept only in memory.
       if (state.setup_required) return { kind: "setup-required" };
       return state.authenticated
         ? { kind: "logged-out", reauthenticate: true }
         : { kind: "logged-out" };
     },
-    async setup(token, password) {
-      await request<void>("/auth/setup", "POST", { token: token.trim(), password });
+    async setup(password) {
+      await request<void>("/auth/setup", "POST", { password });
     },
     async login(password) {
       const result = await request<{ csrf_token: string; expires_at: string }>(

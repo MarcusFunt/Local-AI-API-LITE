@@ -6,38 +6,6 @@ import pytest
 from conftest import load_dashboard_module
 
 
-def test_issue_token_cli_prints_unique_token_only_to_console(monkeypatch, tmp_path):
-    bootstrap = load_dashboard_module("bootstrap")
-    auth = load_dashboard_module("auth")
-    persistence = load_dashboard_module("persistence")
-    store = persistence.MetadataStore(tmp_path / "metadata.sqlite3")
-    service = auth.AuthService(store)
-    monkeypatch.setattr(bootstrap, "_service", lambda: service)
-    console = StringIO()
-    errors = StringIO()
-    monkeypatch.setattr("sys.stdout", console)
-    monkeypatch.setattr("sys.stderr", errors)
-
-    assert bootstrap.main(["issue-token"]) == 0
-    first = console.getvalue().strip()
-    console.seek(0)
-    console.truncate(0)
-    assert bootstrap.main(["issue-token"]) == 0
-    second = console.getvalue().strip()
-
-    assert first and second and first != second
-    assert first not in errors.getvalue()
-    assert second not in errors.getvalue()
-    with store.transaction() as connection:
-        token_rows = connection.execute("SELECT token_digest FROM auth_tokens").fetchall()
-    assert all(token not in digest for token in (first, second) for (digest,) in token_rows)
-    with pytest.raises(auth.AuthenticationError):
-        service.setup(first, "LongPasswordForDashboard7")
-    service.setup(second, "LongPasswordForDashboard7")
-    with pytest.raises(auth.AuthenticationError):
-        service.setup(second, "DifferentLongPassword7")
-
-
 def test_recovery_cli_revokes_sessions_and_preserves_vault_data(monkeypatch, tmp_path):
     bootstrap = load_dashboard_module("bootstrap")
     auth = load_dashboard_module("auth")
@@ -45,8 +13,7 @@ def test_recovery_cli_revokes_sessions_and_preserves_vault_data(monkeypatch, tmp
     secrets_store = load_dashboard_module("secrets_store")
     store = persistence.MetadataStore(tmp_path / "metadata.sqlite3")
     service = auth.AuthService(store)
-    setup_token = service.issue_bootstrap()
-    service.setup(setup_token, "LongPasswordForDashboard7")
+    service.setup("LongPasswordForDashboard7")
     login = service.login("LongPasswordForDashboard7", "127.0.0.1")
     control_state = load_dashboard_module("control_state")
     jobs = load_dashboard_module("jobs")

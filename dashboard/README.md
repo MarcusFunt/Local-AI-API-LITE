@@ -21,7 +21,7 @@ From the repository root, run the installer in the same Windows account that use
 .\dashboard\scripts\install_dashboard.ps1
 ```
 
-The installer builds the frontend, creates a private Python environment, secures the user-scoped data directory, and registers and starts the `Local-AI-API-LITE Dashboard Controller` Scheduled Task for the current session and future interactive sign-ins. On a first install it prints a one-time setup token to that local console. Use it at <http://127.0.0.1:8765> to choose the administrator password. New passwords must be 8–256 characters and include uppercase, lowercase, and a digit; symbols are optional. The task binds only to loopback and does not run inference Compose.
+The installer builds the frontend, creates a private Python environment, secures the user-scoped data directory, and registers and starts the `Local-AI-API-LITE Dashboard Controller` Scheduled Task for the current session and future interactive sign-ins. On first visit to <http://127.0.0.1:8765>, create the administrator password; initial setup does not need a token. New passwords must be 8–256 characters and include uppercase, lowercase, and a digit; symbols are optional. The task binds only to loopback and does not run inference Compose. Complete first setup from the Windows account that owns the dashboard because another local process could otherwise claim the first administrator.
 
 Remove the current-user startup task with:
 

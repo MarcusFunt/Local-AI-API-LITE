@@ -101,16 +101,15 @@ describe("dashboard authentication", () => {
     });
   });
 
-  it("submits the one-time setup token without persisting it", async () => {
+  it("submits only the administrator password during first-run setup", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const client = createAuthClient(fetcher);
 
-    await client.setup(" \r\none-time-setup-token\t ", "a-long-setup-password");
+    await client.setup("a-long-setup-password");
 
     const request = fetcher.mock.calls[0][1];
     expect(JSON.parse(String(request?.body))).toEqual({
-      token: "one-time-setup-token",
       password: "a-long-setup-password",
     });
     expect(request?.credentials).toBe("same-origin");
@@ -119,28 +118,31 @@ describe("dashboard authentication", () => {
   });
 
   it.each([
-    [401, "This setup token does not match a token issued by the currently running dashboard."],
+    [409, "Administrator setup is already complete. Sign in instead."],
     [422, "Password does not meet these requirements: at least one uppercase letter; at least one digit."],
   ])("shows the setup server explanation for status %s", async (status, message) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail: message }, status));
 
-    await expect(createAuthClient(fetcher).setup("token", "Password123"))
+    await expect(createAuthClient(fetcher).setup("Password123"))
       .rejects.toThrow(message);
   });
 
-  it("renders actionable setup failures in the administrator form", () => {
+  it("does not ask for a setup token during initial administrator setup", () => {
     render(
       <AuthPage
         mode="setup-required"
         onSetup={vi.fn()}
         onLogin={vi.fn()}
         onRecovery={vi.fn()}
-        error="The setup token was not accepted. Copy the current token and try again."
+        error={null}
         notice={null}
       />,
     );
 
-    expect(screen.getByRole("alert").textContent).toContain("setup token was not accepted");
+    expect(screen.getByRole("heading", { name: "Set up administrator access" })).toBeTruthy();
+    expect(screen.getByLabelText("New administrator password")).toBeTruthy();
+    expect(screen.queryByLabelText("One-time recovery token")).toBeNull();
+    expect(screen.queryByText(/setup token/i)).toBeNull();
   });
 
   it.each([

@@ -15,9 +15,6 @@ from app.auth import (
     InvalidCredentialsError,
     LoginRateLimitedError,
     PasswordPolicyError,
-    SetupTokenExpiredError,
-    SetupTokenNotRecognizedError,
-    SetupTokenUsedError,
     require_csrf,
     require_session,
     validate_local_request,
@@ -28,8 +25,9 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 class SetupRequest(BaseModel):
-    token: str
     password: str
+
+    model_config = {"extra": "forbid"}
 
 
 class LoginRequest(BaseModel):
@@ -68,17 +66,11 @@ def auth_state(request: Request) -> dict[str, bool]:
 def setup(body: SetupRequest, request: Request) -> Response:
     validate_local_request(request)
     try:
-        _service(request).setup(body.token, body.password)
+        _service(request).setup(body.password)
     except PasswordPolicyError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
     except AdministratorAlreadyConfiguredError as error:
         raise HTTPException(status_code=409, detail=str(error)) from None
-    except SetupTokenExpiredError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from None
-    except SetupTokenUsedError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from None
-    except SetupTokenNotRecognizedError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from None
     except AuthenticationError:
         raise HTTPException(
             status_code=401,

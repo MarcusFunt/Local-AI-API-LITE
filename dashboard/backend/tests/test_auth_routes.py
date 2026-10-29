@@ -34,11 +34,10 @@ def test_auth_state_and_minimal_liveness_are_public(tmp_path):
         assert client.get(path).status_code == 401
 
 
-def test_setup_reports_password_policy_and_keeps_token_available(tmp_path):
+def test_setup_sets_admin_password_without_token_and_reports_password_policy(tmp_path):
     client = _client(tmp_path)
-    token = client.app.state.auth_service.issue_bootstrap()
 
-    rejected = client.post("/auth/setup", json_body={"token": token, "password": "short"})
+    rejected = client.post("/auth/setup", json_body={"password": "short"})
 
     assert rejected.status_code == 422
     assert rejected.json() == {
@@ -47,66 +46,34 @@ def test_setup_reports_password_policy_and_keeps_token_available(tmp_path):
     }
     assert client.get("/auth/state").json()["setup_required"] is True
 
-    accepted = client.post("/auth/setup", json_body={"token": token, "password": "Abcd1234"})
-    assert accepted.status_code == 204
-
-
-def test_setup_reports_when_setup_token_is_not_accepted(tmp_path):
-    client = _client(tmp_path)
-
-    rejected = client.post(
-        "/auth/setup",
-        json_body={"token": "not-the-token", "password": PASSWORD},
-    )
-
-    assert rejected.status_code == 401
-    assert rejected.json() == {
-        "detail": "This setup token does not match a token issued by the currently running dashboard. "
-        "Open this dashboard's setup-token.txt and copy the full value."
-    }
-    assert client.get("/auth/state").json()["setup_required"] is True
-
-
-def test_setup_accepts_token_with_copy_paste_whitespace(tmp_path):
-    client = _client(tmp_path)
-    token = client.app.state.auth_service.issue_bootstrap()
-
-    accepted = client.post(
-        "/auth/setup",
-        json_body={"token": f" \r\n{token}\t ", "password": PASSWORD},
-    )
-
+    accepted = client.post("/auth/setup", json_body={"password": "Abcd1234"})
     assert accepted.status_code == 204
     assert client.get("/auth/state").json()["setup_required"] is False
 
 
-def test_setup_explains_expired_token(tmp_path):
+def test_setup_rejects_second_administrator_creation(tmp_path):
     client = _client(tmp_path)
-    service = client.app.state.auth_service
-    token = service.issue_bootstrap()
-    with service.store.transaction() as connection:
-        connection.execute("UPDATE auth_tokens SET expires_at = ?", ("2000-01-01T00:00:00Z",))
+    assert client.post("/auth/setup", json_body={"password": PASSWORD}).status_code == 204
 
-    rejected = client.post("/auth/setup", json_body={"token": token, "password": PASSWORD})
+    rejected = client.post(
+        "/auth/setup",
+        json_body={"password": "DifferentPass123"},
+    )
 
-    assert rejected.status_code == 401
-    assert rejected.json() == {
-        "detail": "This setup token has expired. Generate a new one-time setup token."
-    }
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "Administrator setup is already complete. Sign in instead."}
 
 
-def test_setup_explains_already_used_token(tmp_path):
+def test_setup_no_longer_accepts_a_setup_token_field(tmp_path):
     client = _client(tmp_path)
-    service = client.app.state.auth_service
-    old_token = service.issue_bootstrap()
-    service.issue_bootstrap()
 
-    rejected = client.post("/auth/setup", json_body={"token": old_token, "password": PASSWORD})
+    response = client.post(
+        "/auth/setup",
+        json_body={"token": "legacy-token", "password": PASSWORD},
+    )
 
-    assert rejected.status_code == 401
-    assert rejected.json() == {
-        "detail": "This setup token has already been used. Use the administrator sign-in form."
-    }
+    assert response.status_code == 422
+    assert client.get("/auth/state").json()["setup_required"] is True
 
 
 def test_login_sets_rotating_http_only_same_site_cookie(tmp_path):
@@ -167,8 +134,7 @@ def test_login_explains_the_exact_rate_limit(tmp_path):
 
 def test_secure_cookie_is_set_for_https(tmp_path):
     client = _client(tmp_path, base_url="https://127.0.0.1:8765")
-    token = client.app.state.auth_service.issue_bootstrap()
-    setup = client.post("/auth/setup", json_body={"token": token, "password": PASSWORD})
+    setup = client.post("/auth/setup", json_body={"password": PASSWORD})
     login = client.post("/auth/login", json_body={"password": PASSWORD})
 
     assert setup.status_code == 204
@@ -178,10 +144,9 @@ def test_secure_cookie_is_set_for_https(tmp_path):
 
 def test_wrong_host_or_origin_is_rejected(tmp_path):
     client = _client(tmp_path)
-    token = client.app.state.auth_service.issue_bootstrap()
     response = client.post(
         "/auth/setup",
-        json_body={"token": token, "password": PASSWORD},
+        json_body={"password": PASSWORD},
         headers={"host": "attacker.example", "origin": "http://attacker.example"},
     )
 
@@ -191,10 +156,9 @@ def test_wrong_host_or_origin_is_rejected(tmp_path):
 
 def test_wrong_origin_is_rejected_for_loopback_host(tmp_path):
     client = _client(tmp_path)
-    token = client.app.state.auth_service.issue_bootstrap()
     response = client.post(
         "/auth/setup",
-        json_body={"token": token, "password": PASSWORD},
+        json_body={"password": PASSWORD},
         headers={"origin": "http://attacker.example"},
     )
 
