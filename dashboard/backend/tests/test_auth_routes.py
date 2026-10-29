@@ -34,6 +34,39 @@ def test_auth_state_and_minimal_liveness_are_public(tmp_path):
         assert client.get(path).status_code == 401
 
 
+def test_setup_reports_password_policy_and_keeps_token_available(tmp_path):
+    client = _client(tmp_path)
+    token = client.app.state.auth_service.issue_bootstrap()
+
+    rejected = client.post("/auth/setup", json_body={"token": token, "password": "short"})
+
+    assert rejected.status_code == 422
+    assert rejected.json() == {
+        "detail": "The password must be 8–256 characters and include at least one uppercase letter, "
+        "one lowercase letter, and one digit. Symbols are optional."
+    }
+    assert client.get("/auth/state").json()["setup_required"] is True
+
+    accepted = client.post("/auth/setup", json_body={"token": token, "password": "Abcd1234"})
+    assert accepted.status_code == 204
+
+
+def test_setup_reports_when_setup_token_is_not_accepted(tmp_path):
+    client = _client(tmp_path)
+
+    rejected = client.post(
+        "/auth/setup",
+        json_body={"token": "not-the-token", "password": PASSWORD},
+    )
+
+    assert rejected.status_code == 401
+    assert rejected.json() == {
+        "detail": "The setup token was not accepted. It may be expired or already used; "
+        "copy the current token from setup-token.txt and try again."
+    }
+    assert client.get("/auth/state").json()["setup_required"] is True
+
+
 def test_login_sets_rotating_http_only_same_site_cookie(tmp_path):
     client = _client(tmp_path)
     client.setup_admin(PASSWORD)

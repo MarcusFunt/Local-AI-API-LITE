@@ -10,6 +10,7 @@ from app.auth import (
     AuthenticationError,
     AuthService,
     AuthSession,
+    PasswordPolicyError,
     require_csrf,
     require_session,
     validate_local_request,
@@ -61,8 +62,16 @@ def setup(body: SetupRequest, request: Request) -> Response:
     validate_local_request(request)
     try:
         _service(request).setup(body.token, body.password)
+    except PasswordPolicyError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
     except AuthenticationError:
-        raise _auth_failure() from None
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "The setup token was not accepted. It may be expired or already used; "
+                "copy the current token from setup-token.txt and try again."
+            ),
+        ) from None
     return Response(status_code=204)
 
 

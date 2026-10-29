@@ -56,7 +56,31 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      const message = response.status === 401 ? "Authentication failed" : `Dashboard request failed (${response.status})`;
+      let setupDetail: string | null = null;
+      if (path === "/auth/setup") {
+        try {
+          const payload: unknown = await response.json();
+          if (
+            typeof payload === "object" &&
+            payload !== null &&
+            "detail" in payload &&
+            typeof payload.detail === "string"
+          ) {
+            setupDetail = payload.detail;
+          }
+        } catch {
+          // Keep the setup-specific fallback when the response is not JSON.
+        }
+      }
+      const message = setupDetail ?? (
+        path === "/auth/setup" && response.status === 401
+          ? "The setup token was not accepted. Check that it is current and unused."
+          : path === "/auth/setup" && response.status === 422
+            ? ADMIN_PASSWORD_HINT
+            : response.status === 401
+              ? "Authentication failed"
+              : `Dashboard request failed (${response.status})`
+      );
       throw new AuthRequestError(message, response.status);
     }
     if (response.status === 204) return undefined as T;

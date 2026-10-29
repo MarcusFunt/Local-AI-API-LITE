@@ -116,6 +116,40 @@ describe("dashboard authentication", () => {
     setItem.mockRestore();
   });
 
+  it.each([
+    [401, "The setup token was not accepted. Copy the current token and try again."],
+    [422, "The password must include uppercase, lowercase, and a number."],
+  ])("shows the setup server explanation for status %s", async (status, message) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ detail: message }, status));
+
+    await expect(createAuthClient(fetcher).setup("token", "Password123"))
+      .rejects.toThrow(message);
+  });
+
+  it("renders actionable setup failures in the administrator form", () => {
+    render(
+      <AuthPage
+        mode="setup-required"
+        onSetup={vi.fn()}
+        onLogin={vi.fn()}
+        onRecovery={vi.fn()}
+        error="The setup token was not accepted. Copy the current token and try again."
+        notice={null}
+      />,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("setup token was not accepted");
+  });
+
+  it("keeps sign-in failures generic even when the server provides a detail", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ detail: "Private sign-in detail" }, 401),
+    );
+
+    await expect(createAuthClient(fetcher).login("Password123"))
+      .rejects.toThrow("Authentication failed");
+  });
+
   it("submits a password and keeps login CSRF data in memory", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ csrf_token: "csrf-memory-only", expires_at: "2026-10-29T20:00:00Z" }),

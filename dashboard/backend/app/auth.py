@@ -46,8 +46,12 @@ AUTH_SCHEMA = [
 class AuthenticationError(RuntimeError):
     """A deliberately generic authentication failure."""
 
-    def __init__(self) -> None:
-        super().__init__("Authentication failed")
+    def __init__(self, message: str = "Authentication failed") -> None:
+        super().__init__(message)
+
+
+class PasswordPolicyError(AuthenticationError):
+    """A new password does not meet the administrator password policy."""
 
 
 class Argon2PasswordHasher:
@@ -410,7 +414,10 @@ def _validate_password(password: str) -> None:
         or not any("a" <= character <= "z" for character in password)
         or not any("0" <= character <= "9" for character in password)
     ):
-        raise AuthenticationError()
+        raise PasswordPolicyError(
+            "The password must be 8–256 characters and include at least one uppercase letter, "
+            "one lowercase letter, and one digit. Symbols are optional."
+        )
 
 
 def _safe_hash(hasher: object, password: str) -> str:
