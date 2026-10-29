@@ -73,6 +73,47 @@ export interface OperationStateSnapshot {
   latest_operation: OperationRecord | null;
 }
 
+export type JobId = "server-readiness" | "api-smoke" | "performance-benchmark";
+export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled" | "rejected";
+
+export interface JobRecord {
+  job_id: string;
+  kind: JobId;
+  state: JobState;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  options: Record<string, string | number | boolean>;
+  summary: Record<string, unknown>;
+  error_category: string | null;
+  artifact_id: string | null;
+  exit_code: number | null;
+}
+
+export interface JobHistoryResponse {
+  jobs: JobRecord[];
+  limit: number;
+  offset: number;
+}
+
+export interface JobDifference {
+  field: string;
+  left: string | number;
+  right: string | number;
+}
+
+export interface JobComparison {
+  comparable: boolean;
+  differences: JobDifference[];
+  left: JobRecord;
+  right: JobRecord;
+}
+
+export interface JobCleanupPreview {
+  removable_jobs: number;
+  removable_artifacts: number;
+}
+
 export interface ModelConfiguration {
   model_id: string;
   model_revision: string | null;
@@ -196,4 +237,78 @@ export function restartInference(csrfToken: string): Promise<OperationRecord> {
 
 export function applyProfile(profileId: string, csrfToken: string): Promise<OperationRecord> {
   return postOperation("/api/control/v1/operations/apply-profile", csrfToken, { profile_id: profileId });
+}
+
+export async function startJob(
+  jobId: JobId,
+  options: Record<string, string | number | boolean>,
+  csrfToken: string,
+): Promise<JobRecord> {
+  const response = await fetch("/api/control/v1/jobs/start", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    credentials: "same-origin",
+    cache: "no-store",
+    body: JSON.stringify({ job_id: jobId, options }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  return (await response.json()) as JobRecord;
+}
+
+export async function cancelJob(jobId: string, csrfToken: string): Promise<{ cancel_requested: boolean; job: JobRecord }> {
+  const response = await fetch(`/api/control/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  return (await response.json()) as { cancel_requested: boolean; job: JobRecord };
+}
+
+export function getJobStatus(jobId: string): Promise<JobRecord> {
+  return getJson<JobRecord>(`/api/control/v1/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function getJobHistory(limit = 50, offset = 0): Promise<JobHistoryResponse> {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return getJson<JobHistoryResponse>(`/api/control/v1/jobs/history?${query.toString()}`);
+}
+
+export function compareJobs(leftId: string, rightId: string): Promise<JobComparison> {
+  const query = new URLSearchParams({ left_id: leftId, right_id: rightId });
+  return getJson<JobComparison>(`/api/control/v1/jobs/compare?${query.toString()}`);
+}
+
+export function previewJobCleanup(): Promise<JobCleanupPreview> {
+  return getJson<JobCleanupPreview>("/api/control/v1/jobs/cleanup/preview");
+}
+
+export async function cleanupJobHistory(csrfToken: string): Promise<{ deleted_jobs: number; deleted_artifacts: number }> {
+  const response = await fetch("/api/control/v1/jobs/cleanup", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    credentials: "same-origin",
+    cache: "no-store",
+    body: JSON.stringify({ confirm: true }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  return (await response.json()) as { deleted_jobs: number; deleted_artifacts: number };
+}
+
+export function getJobArtifact(jobId: string): Promise<{ job_id: string; records: Record<string, unknown>[] }> {
+  return getJson<{ job_id: string; records: Record<string, unknown>[] }>(
+    `/api/control/v1/jobs/${encodeURIComponent(jobId)}/artifact`,
+  );
 }

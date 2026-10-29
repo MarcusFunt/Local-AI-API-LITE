@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -34,6 +35,7 @@ def read_gpu_telemetry(
         nvml.nvmlInit()
         initialized = True
         device = nvml.nvmlDeviceGetHandleByIndex(0)
+        device_name = _device_name(nvml, device)
         memory = nvml.nvmlDeviceGetMemoryInfo(device)
         utilization = nvml.nvmlDeviceGetUtilizationRates(device)
         temperature = _optional_number(
@@ -46,6 +48,7 @@ def read_gpu_telemetry(
         return {
             "available": True,
             "scope": "device-wide",
+            "device_name": device_name,
             "reason": None,
             "utilization_percent": _safe_percent(getattr(utilization, "gpu", None)),
             "memory_used_bytes": _safe_nonnegative_int(getattr(memory, "used", None)),
@@ -60,6 +63,7 @@ def read_gpu_telemetry(
         return {
             "available": False,
             "scope": "device-wide",
+            "device_name": None,
             "reason": f"NVML unavailable ({type(exc).__name__})",
             "utilization_percent": None,
             "memory_used_bytes": None,
@@ -78,6 +82,22 @@ def _safe_nonnegative_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return None
     return int(value)
+
+
+def _device_name(nvml: Any, device: Any) -> str | None:
+    function = getattr(nvml, "nvmlDeviceGetName", None)
+    if not callable(function):
+        return None
+    try:
+        value = function(device)
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if not isinstance(value, str):
+            return None
+        candidate = value.strip()[:128]
+        return candidate if re.fullmatch(r"[A-Za-z0-9 _.,()+-]{1,128}", candidate) else None
+    except Exception:  # noqa: BLE001 - vendor-specific NVML failures are optional metadata.
+        return None
 
 
 def _safe_nonnegative_number(value: Any) -> float | None:

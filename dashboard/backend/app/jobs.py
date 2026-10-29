@@ -26,6 +26,7 @@ MAX_ARTIFACT_BYTES = 512 * 1024
 MAX_ARTIFACT_LINES = 500
 MAX_ARTIFACT_FILES = 30
 MAX_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
+MAX_JOB_HISTORY_RECORDS = 500
 JOB_SCRIPT_VERSION = "1"
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 _MODEL_ALIAS = "ddu-narrator"
@@ -42,6 +43,8 @@ _ALLOWED_ERROR_CATEGORIES = {
     "model_alias_mismatch",
     "request_failed",
     "output_too_large",
+    "profile_mismatch",
+    "runtime_unavailable",
     "command_failed",
 }
 _ALLOWED_EXCEPTION_CLASSES = {
@@ -103,6 +106,10 @@ class JobValidationError(ValueError):
 
 class ArtifactLimitError(RuntimeError):
     """A generated artifact exceeded its configured retention boundary."""
+
+
+class JobHistoryFullError(RuntimeError):
+    """The bounded job history must be explicitly cleaned before accepting more jobs."""
 
 
 @dataclass(frozen=True)
@@ -222,6 +229,9 @@ class JobStore:
 
     def create(self, job_id: str, kind: str, options: dict[str, Any], now: float) -> dict[str, Any]:
         with self.metadata.transaction() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM dashboard_jobs").fetchone()[0]
+            if count >= MAX_JOB_HISTORY_RECORDS:
+                raise JobHistoryFullError("Dashboard job history is full")
             connection.execute(
                 "INSERT INTO dashboard_jobs "
                 "(job_id, kind, state, created_at, options_json, summary_json) "
@@ -285,6 +295,27 @@ class JobStore:
                 (bounded_limit, bounded_offset),
             ).fetchall()
         return [self.get(row[0]) for row in rows]
+
+    def cleanup_candidates(self) -> list[dict[str, Any]]:
+        with self.metadata.transaction() as connection:
+            rows = connection.execute(
+                "SELECT job_id FROM dashboard_jobs WHERE state NOT IN ('queued', 'running') "
+                "ORDER BY created_at"
+            ).fetchall()
+        return [self.get(row[0]) for row in rows]
+
+    def delete(self, job_ids: list[str]) -> int:
+        ids = [_validate_and_return_job_id(job_id) for job_id in job_ids]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        with self.metadata.transaction() as connection:
+            cursor = connection.execute(
+                f"DELETE FROM dashboard_jobs WHERE job_id IN ({placeholders}) "
+                "AND state NOT IN ('queued', 'running')",
+                ids,
+            )
+        return cursor.rowcount
 
 
 class JobArtifactStore:
@@ -371,8 +402,25 @@ class JobArtifactStore:
             raise KeyError("Job artifact is unavailable")
         return path.read_text(encoding="utf-8")
 
+    def contains(self, artifact_id: str) -> bool:
+        return bool(
+            isinstance(artifact_id, str)
+            and re.fullmatch(r"[0-9a-f]{32}\.jsonl", artifact_id)
+            and (self.root / artifact_id).is_file()
+        )
+
     def list_artifacts(self) -> list[Path]:
         return sorted(self.root.glob("[0-9a-f]" * 32 + ".jsonl"), key=lambda path: path.stat().st_mtime)
+
+    def delete_artifacts(self, job_ids: list[str]) -> int:
+        deleted = 0
+        for job_id in job_ids:
+            _validate_job_id(job_id)
+            path = self.root / f"{job_id}.jsonl"
+            if path.is_file():
+                path.unlink()
+                deleted += 1
+        return deleted
 
     def cleanup_work(self, job_id: str) -> None:
         _validate_job_id(job_id)
@@ -408,11 +456,20 @@ class DockerJobCommandAdapter:
         docker_path: str | None,
         script_root: Path,
         profiles_path: Path | None = None,
+        runtime_inspector: Any | None = None,
     ) -> None:
         self.docker_path = docker_path
         self.script_root = Path(script_root).resolve()
         self.profiles_path = profiles_path
+        self.runtime_inspector = runtime_inspector
         self._container_names: dict[str, str] = {}
+
+    def active_profile_id(self) -> str | None:
+        if self.runtime_inspector is None:
+            raise RuntimeError("Runtime inspector is unavailable")
+        snapshot = self.runtime_inspector.inspect_project()
+        profile_id = snapshot.get("active_profile_id") if isinstance(snapshot, dict) else None
+        return profile_id if isinstance(profile_id, str) else None
 
     def run(
         self,
@@ -689,10 +746,32 @@ class JobRunner:
 
     def status(self, job_id: str) -> dict[str, Any]:
         _validate_job_id(job_id)
-        return self.store.get(job_id)
+        record = self.store.get(job_id)
+        if record["artifact_id"] and not self.artifact_store.contains(record["artifact_id"]):
+            record["artifact_id"] = None
+        return record
 
     def history(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        return self.store.list(limit, offset)
+        records = self.store.list(limit, offset)
+        for record in records:
+            if record["artifact_id"] and not self.artifact_store.contains(record["artifact_id"]):
+                record["artifact_id"] = None
+        return records
+
+    def preview_cleanup(self) -> dict[str, Any]:
+        candidates = self.store.cleanup_candidates()
+        candidate_ids = {record["job_id"] for record in candidates}
+        artifacts = sum(path.stem in candidate_ids for path in self.artifact_store.list_artifacts())
+        return {"removable_jobs": len(candidates), "removable_artifacts": artifacts}
+
+    def cleanup_history(self, *, confirm: bool) -> dict[str, int]:
+        if confirm is not True:
+            raise ValueError("Explicit job-history cleanup confirmation is required")
+        candidates = self.store.cleanup_candidates()
+        job_ids = [record["job_id"] for record in candidates]
+        deleted_jobs = self.store.delete(job_ids)
+        deleted_artifacts = self.artifact_store.delete_artifacts(job_ids)
+        return {"deleted_jobs": deleted_jobs, "deleted_artifacts": deleted_artifacts}
 
     def _execute(
         self,
@@ -709,6 +788,17 @@ class JobRunner:
         timer.start()
         try:
             self.store.update(job_id, state="running", started_at=started)
+            if spec.job_id == "performance-benchmark":
+                inspect_profile = getattr(self.command_adapter, "active_profile_id", None)
+                if callable(inspect_profile):
+                    try:
+                        active_profile = inspect_profile()
+                    except Exception:  # noqa: BLE001 - keep Docker details out of job history.
+                        self._finish(job_id, "failed", "runtime_unavailable")
+                        return
+                    if active_profile != options["profile_id"]:
+                        self._finish(job_id, "failed", "profile_mismatch")
+                        return
             command_options = {**options, "_job_kind": spec.job_id}
             result = self.command_adapter.run(
                 job_id,
@@ -928,6 +1018,8 @@ def _provenance(profile_id: str | None, options: dict[str, Any]) -> dict[str, An
     except Exception:  # noqa: BLE001 - telemetry is optional provenance.
         telemetry = {"gpu": {"available": False}}
     image = profile.get("image_ref") if profile else None
+    gpu = telemetry.get("gpu") if isinstance(telemetry, dict) else None
+    gpu_model = gpu.get("device_name") if isinstance(gpu, dict) else None
     return {
         "profile_id": profile_id,
         "model_revision": profile.get("model_revision") if profile else None,
@@ -936,6 +1028,11 @@ def _provenance(profile_id: str | None, options: dict[str, Any]) -> dict[str, An
         "context_length": profile.get("max_model_len") if profile else None,
         "max_num_seqs": profile.get("max_num_seqs") if profile else None,
         "host": {"platform": platform.system(), "architecture": platform.machine()},
+        "hardware": {
+            "platform": platform.system(),
+            "architecture": platform.machine(),
+            "gpu_model": gpu_model if isinstance(gpu_model, str) else None,
+        },
         "telemetry": telemetry,
         "concurrency": options.get("concurrency", 1),
         "script_version": JOB_SCRIPT_VERSION,
@@ -954,6 +1051,11 @@ def _mount_value(path: Path, target: str, *, readonly: bool) -> str:
 def _validate_job_id(job_id: str) -> None:
     if not isinstance(job_id, str) or not _JOB_ID.fullmatch(job_id):
         raise KeyError("Dashboard job is unavailable")
+
+
+def _validate_and_return_job_id(job_id: str) -> str:
+    _validate_job_id(job_id)
+    return job_id
 
 
 def _number(value: Any, *, integer: bool) -> int | float | None:

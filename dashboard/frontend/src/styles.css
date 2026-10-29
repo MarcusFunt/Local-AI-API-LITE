@@ -194,6 +194,39 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .operation-confirmation p { margin: 8px 0 0; color: #a9a08a; font-size: 10px; line-height: 1.5; }
 .operation-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .operation-confirm-actions .secondary-button { margin-top: 0; }
+.job-launch-panel, .job-history-panel, .job-compare-panel { margin-top: 13px; padding: 19px 20px; }
+.job-form { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); align-items: end; gap: 10px; margin-top: 16px; }
+.job-form label, .job-compare-controls label { display: grid; gap: 7px; color: #a5b1a9; font-size: 10px; }
+.job-form select, .job-compare-controls select { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid #35413a; border-radius: 6px; color: #dce5de; background: #111613; font: 10px var(--mono); }
+.job-form .primary-button { margin-top: 0; }
+.job-check-label { display: flex !important; align-items: center; align-self: center; gap: 8px !important; }
+.job-check-label input { accent-color: #98e4c1; }
+.job-disclosure { margin: 13px 0 0; color: #78877e; font-size: 9px; line-height: 1.5; }
+.job-active-state { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; padding: 10px 12px; border: 1px solid #365442; border-radius: 6px; color: #b6d8bf; background: #1a251e; font: 10px var(--mono); }
+.job-active-state .secondary-button { margin-top: 0; }
+.job-history-panel > .panel-heading > .secondary-button { margin-top: 0; }
+.job-history-list { display: grid; margin-top: 12px; }
+.job-history-row { display: grid; grid-template-columns: minmax(150px, 1fr) 2fr auto; align-items: center; gap: 14px; padding: 12px 1px; border-bottom: 1px solid #29312c; }
+.job-history-row:last-child { border-bottom: 0; }
+.job-history-row > div:first-child strong, .job-history-row > div:first-child span { display: block; }
+.job-history-row > div:first-child strong { color: #dce5de; font: 11px var(--mono); text-transform: capitalize; }
+.job-history-row > div:first-child span { margin-top: 5px; color: #78867d; font-size: 9px; }
+.job-history-summary { display: flex; flex-wrap: wrap; gap: 7px 14px; color: #87968c; font-size: 9px; }
+.job-history-row .text-button { margin: 0; white-space: nowrap; }
+.job-compare-controls { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 10px; margin-top: 16px; }
+.job-compare-controls .secondary-button { margin-top: 0; }
+.job-comparison-result { margin-top: 15px; padding: 12px 13px; border: 1px solid #34473a; border-radius: 6px; color: #aab8ae; background: #151b17; font-size: 10px; }
+.job-comparison-result > strong { color: #dce5de; text-transform: uppercase; }
+.job-comparison-result ul { display: grid; gap: 8px; margin: 12px 0 0; padding-left: 18px; }
+.job-comparison-result li span { color: #8fbd9c; }
+.job-confirm-box { margin-top: 15px; padding: 15px; border: 1px solid #6b5d3e; border-radius: 7px; background: #211f18; }
+.job-confirm-box h3 { margin: 0; color: #e9dcba; font: 600 13px var(--display); }
+.job-confirm-box p { color: #a9a08a; font-size: 10px; line-height: 1.5; }
+.job-confirm-box > div { display: flex; justify-content: flex-end; gap: 8px; }
+.job-confirm-box .secondary-button { margin-top: 0; }
+.job-artifact-view { margin-top: 17px; padding-top: 14px; border-top: 1px solid #29312c; }
+.job-artifact-view h3 { margin: 0; color: #dce5de; font: 600 12px var(--display); }
+.job-artifact-view pre { max-height: 300px; overflow: auto; margin: 10px 0 0; padding: 12px; border-radius: 6px; color: #a8c8b1; background: #111613; font: 9px/1.5 var(--mono); white-space: pre-wrap; }
 .app-footer { display: flex; justify-content: space-between; gap: 10px; margin: 0 auto; max-width: 1440px; padding: 17px 0 21px; border-top: 1px solid #222a26; color: #59665e; font: 8px var(--mono); letter-spacing: .06em; }
 .app-footer i { display: inline-block; width: 4px; height: 4px; margin: 0 6px 1px; border-radius: 50%; background: #6d9b7c; }
 
@@ -239,6 +272,7 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .observed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .operation-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .job-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .sidebar { position: static; width: auto; min-height: auto; padding: 15px 17px 11px; border-right: 0; border-bottom: 1px solid #252d29; }
@@ -262,6 +296,8 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .metric-value { font-size: 16px; }
   .lower-grid, .profile-grid { grid-template-columns: 1fr; }
   .operation-controls { grid-template-columns: 1fr; }
+  .job-form, .job-compare-controls { grid-template-columns: 1fr; }
+  .job-history-row { grid-template-columns: 1fr; align-items: start; gap: 8px; }
   .operation-confirm-actions { justify-content: stretch; }
   .operation-confirm-actions button { flex: 1; }
   .observed-grid { gap: 14px 9px; }

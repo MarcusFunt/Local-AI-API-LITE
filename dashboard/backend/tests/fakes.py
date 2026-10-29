@@ -38,11 +38,15 @@ class FakeJobCommandAdapter:
     def __init__(self) -> None:
         self.stdout = '{"ok":true,"health":"ok","model":"ddu-narrator","requests":2}'
         self.exit_code = 0
+        self.active_profile = "baseline-4k-2"
         self.block = False
         self.started = threading.Event()
         self.release = threading.Event()
         self.calls: list[dict] = []
         self.artifact_lines: list[str] = []
+
+    def active_profile_id(self) -> str | None:
+        return self.active_profile
 
     def run(
         self,

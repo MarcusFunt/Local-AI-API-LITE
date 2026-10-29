@@ -33,6 +33,10 @@ def test_nvml_reports_device_wide_metrics_and_keeps_unsupported_fields_unavailab
             assert index == 0
             return "gpu0"
 
+        def nvmlDeviceGetName(self, device):
+            assert device == "gpu0"
+            return b"NVIDIA GeForce RTX 3060"
+
         def nvmlDeviceGetMemoryInfo(self, device):
             assert device == "gpu0"
             return type("Memory", (), {"used": 1024, "total": 4096, "free": 3072})()
@@ -45,6 +49,7 @@ def test_nvml_reports_device_wide_metrics_and_keeps_unsupported_fields_unavailab
 
     assert result["available"] is True
     assert result["scope"] == "device-wide"
+    assert result["device_name"] == "NVIDIA GeForce RTX 3060"
     assert result["utilization_percent"] == 7
     assert result["memory_used_bytes"] == 1024
     assert result["memory_total_bytes"] == 4096

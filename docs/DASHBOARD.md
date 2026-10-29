@@ -79,6 +79,7 @@ The command validates the pinned Compose project, external `ddu_inference_bus` n
 - `GET /api/control/v1/status` requires an administrator session and returns cached inference state, the observed runtime configuration, telemetry, and snapshot freshness/error metadata.
 - `GET /api/control/v1/telemetry`, `GET /api/control/v1/profiles`, and `GET /api/control/v1/operations/state` require an administrator session.
 - `POST /api/control/v1/operations/start`, `/stop`, `/restart`, and `/apply-profile` require an administrator session and CSRF token. Start and profile changes accept only a versioned profile ID; the API exposes no shell, Compose argument, prompt, or arbitrary command input.
+- Job history, status, results, comparisons, and cleanup previews require an administrator session. Job start, cancellation, and confirmed cleanup also require a CSRF token.
 
 ## Inference operations
 
@@ -87,6 +88,14 @@ The Models page offers fixed Start, Stop, Restart, and Apply Profile actions. Ea
 The dashboard records desired state and the latest operation in local SQLite metadata. Desired state starts as `stopped`, and a deliberate Stop remains stopped after a controller or browser restart; starting inference always requires an operator action. Long model loading is shown as an active operation. Candidate failures report whether a last-known-good profile was restored. Profile activation waits for container health and the fixed `/health` and `/v1/models` contract checks before reporting success. Those checks do not send prompts or collect request/response content.
 
 The fixed controller operations can start, stop, or recreate only the validated `vllm` service in the explicitly configured project. They do not run `compose down`, remove containers or volumes, change networks, publish host ports, or accept arbitrary commands. A profile switch preserves the model-cache volume and the stable `ddu-llm` alias. Dashboard restart reconciliation is read-only and does not start or stop inference automatically.
+
+## Predefined checks, benchmarks, and history
+
+The Benchmarks page exposes only three fixed jobs: server readiness, the existing synthetic API smoke cases, and a bounded performance benchmark. A job runs inside an ephemeral, resource-limited Docker client on `ddu_inference_bus`, with the pinned vLLM image, read-only access to the repository scripts, and a private per-job artifact directory. The dashboard passes fixed arguments and does not provide a shell or free-form command field. Jobs share the single-activity gate with inference lifecycle changes. Benchmark concurrency defaults to one; two is available for normal comparison, while four requires an explicit diagnostic choice.
+
+Job metadata is stored in the dashboard's local SQLite database and artifacts under its per-user data directory, outside the repository. Job output is size limited and projected onto an allowlist before it is stored; prompts, completions, credentials, and full HTTP error bodies are discarded. The database retains at most 500 job rows, while sanitized JSONL artifacts are capped at 30 files and 50 MiB. When metadata history reaches its cap, preview cleanup and explicitly confirm it before starting more jobs. Results compare as comparable only when job type, profile/revision, engine image, context/sequence settings, host/GPU, and script version match. Differences are shown instead of combining incompatible measurements.
+
+The page polls job history while a job is queued or running. A cancellation request stops only the dashboard's ephemeral job container. It does not stop or reconfigure the inference service. The controller does not collect benchmark prompt or response content.
 
 The status handler reads from memory immediately while a single bounded worker refreshes Docker status and host telemetry. A successful Docker query with no matching container is `Stopped`; a failed query is `Unknown/Unavailable`. The UI polls every five seconds while visible, backs off to thirty seconds while hidden, allows one in-flight status request, and keeps up to 120 samples in browser memory. It does not write metrics or model data to disk.
 

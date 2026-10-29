@@ -97,6 +97,19 @@ def test_inference_operation_gate_rejects_concurrent_benchmark(tmp_path):
     assert gate.current()["operation_id"] == "inference-op"
 
 
+def test_benchmark_profile_must_match_the_observed_inference_profile(tmp_path):
+    command = FakeJobCommandAdapter()
+    command.active_profile = "baseline-8k-4"
+    _jobs, _gate, _command, _artifacts, runner = make_runner(tmp_path, command)
+
+    created = runner.start("performance-benchmark", {"profile_id": "baseline-4k-2"})
+    record = wait_for_terminal(runner, created["job_id"])
+
+    assert record["state"] == "failed"
+    assert record["error_category"] == "profile_mismatch"
+    assert command.calls == []
+
+
 def test_job_timeout_and_cancel_are_recorded(tmp_path):
     command = FakeJobCommandAdapter()
     command.block = True
@@ -161,8 +174,9 @@ def test_output_size_and_artifact_retention_are_bounded(tmp_path):
 
     command.stdout = '{"ok":true,"health":"ok","model":"ddu-narrator","requests":2}'
     first = runner.start("server-readiness", {})
-    wait_for_terminal(runner, first["job_id"])
+    first_record = wait_for_terminal(runner, first["job_id"])
     second = runner.start("server-readiness", {})
     second_record = wait_for_terminal(runner, second["job_id"])
     assert len(artifacts.list_artifacts()) == 1
     assert artifacts.list_artifacts()[0].name == second_record["artifact_id"]
+    assert runner.status(first_record["job_id"])["artifact_id"] is None

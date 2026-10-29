@@ -15,10 +15,12 @@ from .compose_runner import ComposeRunner
 from .configuration import LocalSettingsStore
 from .control_state import ActivityGate, OperationCoordinator
 from .docker_status import DockerReader
+from .jobs import DockerJobCommandAdapter, JobArtifactStore, JobRunner
 from .paths import data_directory
 from .persistence import MetadataStore
 from .profiles import DEFAULT_PROFILES_PATH, load_profiles, public_profile
 from .routes.auth import router as auth_router
+from .routes.jobs import router as jobs_router
 from .routes.operations import router as operations_router
 from .status_cache import StatusCache
 from .telemetry import read_host_telemetry
@@ -102,6 +104,7 @@ def create_app(
     operation_coordinator: Any | None = None,
     operation_runner: Any | None = None,
     contract_checker: Any | None = None,
+    job_runner: Any | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Local-AI-API-LITE Dashboard",
@@ -169,7 +172,25 @@ def create_app(
         contract_checker=checker,
         gate=ActivityGate(store),
     )
+    if job_runner is None:
+        job_command_adapter = DockerJobCommandAdapter(
+            docker_path=shutil.which("docker"),
+            script_root=ROOT / "scripts",
+            profiles_path=app.state.profiles_path,
+            runtime_inspector=runner,
+        )
+        activity_gate = getattr(app.state.operation_coordinator, "gate", None)
+        if activity_gate is None:
+            activity_gate = ActivityGate(store)
+        app.state.job_runner = JobRunner(
+            activity_gate,
+            job_command_adapter,
+            JobArtifactStore(),
+        )
+    else:
+        app.state.job_runner = job_runner
     app.include_router(operations_router)
+    app.include_router(jobs_router)
     if operation_coordinator is None:
         try:
             app.state.operation_coordinator.reconcile_after_restart()
