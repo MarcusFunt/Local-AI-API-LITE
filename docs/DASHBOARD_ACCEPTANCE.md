@@ -4,9 +4,10 @@
 **Branch:** `codex/fix-dashboard-runtime-state`
 **Pull requests:** [PR #3](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/3), [PR #4](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/4), and [PR #5](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/5) are merged. [PR #6](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/6) is the open follow-up for runtime-state reconciliation and Task 15 acceptance updates.
 
-## Current status — 2026-10-29 20:12 Copenhagen
+## Current status — 2026-10-29 20:18 Copenhagen
 
 - The operator manually signed in. The authenticated Models page and a fresh read of `/api/control/v1/operations/state` reported `configured: true`.
+- At 20:18 Copenhagen, a browser reload of the authenticated operation-state endpoint still returned the successful Start record and `desired_state: running`. The expected SQLite file still shows the older state, so the source of that response remains unconfirmed.
 - The dashboard Stop operation succeeded at 18:54:54Z (19:54:54 Copenhagen); Docker showed the single project container exited. The dashboard Start operation succeeded at 19:00:57Z (20:00:57 Copenhagen); Docker later reported the pinned container healthy and the page showed Ready.
 - The current runtime is `Ready` on Baseline 8K / 4 sequences, model `RedHatAI/Qwen3.5-4B-quantized.w4a16`, pinned revision `7a613872f394578b0b52b683ff4ac47516b4bcaf`, alias `ddu-narrator`, parser `qwen3`, and pinned vLLM image `v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34`. Docker inspection showed `ddu_inference_bus` with alias `ddu-llm` and no host-published ports.
 - **Persistence mismatch remains unresolved.** The live endpoint returns successful Stop/Start journal records and the current desired state. A direct read-only query of `C:\Users\marcu\AppData\Local\Local-AI-API-LITE\Dashboard\metadata.sqlite3` still shows the pre-operation `running` row, no operation rows, and no administrator or session rows. The serving process is owned by `marcu`, its current directory is `D:\projects\Local-AI-API-LITE\dashboard\backend`, and its `LOCALAPPDATA` is `C:\Users\marcu\AppData\Local`, matching the expected path. The controller code resolves metadata through that per-user path, so the reason the endpoint and file readback disagree is still unknown. Database/auth persistence and desired-state-across-controller-restart acceptance must remain unverified.
@@ -27,7 +28,7 @@ Automated checks use mocked Docker and PostgreSQL adapters. Live inference accep
 | YAML lint | Passed | `yamllint -d relaxed compose.yaml .github/workflows/ci.yml` passed on LF-normalized copies; the Windows working copies use CRLF. No YAML changed in the final fix. |
 | Shell lint | Passed | ShellCheck passed for LF-normalized `scripts/check_prereqs.sh` via WSL. |
 | Fresh whole-branch review | Complete | No Critical findings. The Important cancellation finding was fixed test-first; one Minor status-network observation is deferred in the SDD ledger. The tokenless setup remains a documented user-directed deviation from the original plan. |
-| GitHub Actions | Pending final push | Previous PR #6 checks passed at `ab2f99e`; verify new checks on the Task 15 fix commit after push. |
+| GitHub Actions | Passed | `contract-and-config` passed for both push and pull-request events on head `f979e24`. |
 | Diff whitespace | Passed | `git diff --check` passed on the Task 15 fix working tree. |
 | Windows DPAPI CurrentUser round trip | Passed in focused automated check | Recorded during Task 3 on this Windows host. Cross-user behavior remains pending below. |
 | Local browser/controller session | Partial | The operator manually signed in; the operation-state endpoint returned `configured: true`, and protected Models controls displayed live status. The controller binds to `127.0.0.1:8765`; no-cookie protected status returns 401. The expected per-user database still has zero administrator and active-session rows while the live endpoint serves authenticated state, so auth/database persistence remains unreconciled. |
