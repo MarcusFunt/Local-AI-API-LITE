@@ -10,8 +10,8 @@ The implementation checks used mocked Docker and PostgreSQL adapters. No inferen
 
 | Check | Result | Evidence |
 |---|---|---|
-| Repository Python suite | Passed | `python -m pytest -q` — 180 passed on 2026-10-29. |
-| Dashboard backend suite | Passed | `python -m pytest -q dashboard/backend/tests` — 140 passed on 2026-10-29. |
+| Repository Python suite | Passed | `python -m pytest -q` — 182 passed on 2026-10-29. |
+| Dashboard backend suite | Passed | `python -m pytest -q dashboard/backend/tests` — 142 passed on 2026-10-29. |
 | Backend lint | Passed | `python -m ruff check scripts tests dashboard/backend/app dashboard/backend/tests`. |
 | Frontend tests | Passed | `npm --prefix dashboard/frontend test` — 22 passed. |
 | TypeScript | Passed | `npm --prefix dashboard/frontend run typecheck`. |
@@ -19,7 +19,7 @@ The implementation checks used mocked Docker and PostgreSQL adapters. No inferen
 | Compose rendering | Passed | `docker compose --env-file .env.example config --quiet`; no service was started. |
 | YAML lint | Passed | `yamllint -d relaxed compose.yaml .github/workflows/ci.yml` against LF-normalized source; this Windows checkout stores working copies with CRLF. |
 | Shell lint | Passed | ShellCheck passed for `scripts/check_prereqs.sh` via WSL after normalizing the Windows checkout's CRLF line endings. |
-| Fresh whole-branch review | Passed | No Critical findings; the Important Compose validation gap and DSN validation echo were fixed with regression tests. One Minor vault-metadata completeness follow-up is documented in [DASHBOARD_SECURITY.md](DASHBOARD_SECURITY.md). |
+| Fresh whole-branch review | Passed | No Critical findings; the Compose validation gap, DSN validation echo, and vault-metadata completeness finding were addressed with regression tests and schema migration 7. |
 | Diff whitespace | Passed | `git diff --check`. |
 | Windows DPAPI CurrentUser round trip | Passed in focused automated check | Recorded during Task 3 on this Windows host. Cross-user behavior remains pending below. |
 | Local browser/controller session | Not run | The dashboard Scheduled Task was not installed or launched. |

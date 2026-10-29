@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fakes import FakeKeyProtector
@@ -8,8 +9,9 @@ from fakes import FakeKeyProtector
 from app.auth import AuthService
 from app.control_state import CONTROL_SCHEMA
 from app.jobs import JOB_SCHEMA
-from app.persistence import MetadataStore
+from app.persistence import DATABASE_SCHEMA, MetadataStore
 from app.secrets_store import (
+    VAULT_SCHEMA,
     AESGCMCipher,
     SecretsStore,
     VaultAccessError,
@@ -20,14 +22,14 @@ from app.secrets_store import (
 SECRET_VALUE = "postgresql://monitor:synthetic-password@db.example.invalid:5432/app"
 
 
-def _vault(tmp_path, protector=None):
+def _vault(tmp_path, protector=None, clock=None):
     metadata = MetadataStore(tmp_path / "metadata.sqlite3")
     AuthService(metadata)
     metadata.migrate(3, CONTROL_SCHEMA)
     metadata.migrate(4, JOB_SCHEMA)
     key_file = tmp_path / "vault" / "root-key.dpapi"
     protector = protector or FakeKeyProtector()
-    return SecretsStore(metadata, key_file, protector, AESGCMCipher()), protector
+    return SecretsStore(metadata, key_file, protector, AESGCMCipher(), clock=clock), protector
 
 
 def test_secret_value_is_authenticated_encrypted_and_metadata_separate(tmp_path):
@@ -88,6 +90,67 @@ def test_secret_metadata_never_contains_value(tmp_path):
     with vault.store.transaction() as connection:
         metadata_rows = connection.execute("SELECT * FROM vault_metadata").fetchall()
     assert SECRET_VALUE not in repr(metadata_rows)
+
+
+def test_secret_metadata_tracks_state_and_rotation_without_secret_values(tmp_path):
+    current = [datetime(2026, 10, 29, 10, 0, tzinfo=UTC)]
+    vault, _ = _vault(tmp_path, clock=lambda: current[0])
+
+    secret_id = vault.put("history-db", "postgres", "database-monitor", SECRET_VALUE)
+    created = vault.metadata()[0]
+    assert created["created_at"] == "2026-10-29T10:00:00Z"
+    assert created["rotated_at"] is None
+    assert created["state"] == "active"
+
+    current[0] += timedelta(minutes=3)
+    vault.rename(secret_id, "renamed-db", "database-monitor")
+    renamed = vault.metadata()[0]
+    assert renamed["name"] == "renamed-db"
+    assert renamed["rotated_at"] is None
+
+    current[0] += timedelta(minutes=2)
+    vault.update(secret_id, "renamed-db", "database-monitor", "postgresql://new-secret")
+    rotated = vault.metadata()[0]
+    assert rotated["created_at"] == "2026-10-29T10:00:00Z"
+    assert rotated["rotated_at"] == "2026-10-29T10:05:00Z"
+    assert rotated["state"] == "active"
+    assert "new-secret" not in repr(rotated)
+
+
+def test_existing_vault_metadata_migrates_from_schema_six(tmp_path):
+    metadata = MetadataStore(tmp_path / "metadata.sqlite3")
+    AuthService(metadata)
+    metadata.migrate(3, CONTROL_SCHEMA)
+    metadata.migrate(4, JOB_SCHEMA)
+    metadata.migrate(5, VAULT_SCHEMA)
+    metadata.migrate(6, DATABASE_SCHEMA)
+    secret_id = "a" * 32
+    with metadata.transaction() as connection:
+        connection.execute(
+            "INSERT INTO vault_metadata (secret_id, name, integration, purpose, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (secret_id, "existing-db", "postgres", "database-monitor", "2026-10-28T09:00:00Z"),
+        )
+
+    vault = SecretsStore(
+        metadata,
+        tmp_path / "vault" / "root-key.dpapi",
+        FakeKeyProtector(),
+        AESGCMCipher(),
+    )
+
+    assert metadata.schema_version() == 7
+    assert vault.metadata() == [
+        {
+            "secret_id": secret_id,
+            "name": "existing-db",
+            "integration": "postgres",
+            "purpose": "database-monitor",
+            "created_at": "2026-10-28T09:00:00Z",
+            "rotated_at": None,
+            "state": "active",
+        }
+    ]
 
 
 def test_reveal_token_is_one_use_and_stored_as_digest(tmp_path):

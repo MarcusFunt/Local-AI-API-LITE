@@ -20,6 +20,7 @@ The controller does not start inference at launch. Desired state is persisted in
 ## Local storage and secrets
 
 - SQLite metadata uses WAL and lives in the per-user dashboard data directory. Job and database probe rows contain bounded metadata and safe categories, not credentials or DSNs.
+- Vault metadata stores the credential name, owning integration, purpose, creation and rotation timestamps, and a state field separately from encrypted values; new credentials are marked active.
 - Vault values use AES-GCM with a random root key protected by Windows DPAPI CurrentUser. Missing or corrupt key material locks the vault; there is no plaintext fallback.
 - Database connection strings are encrypted vault values with the `database-monitor` purpose. List, update, check, and remove responses omit them. An administrator can request an explicit one-time reveal; the response is `no-store`, and the UI holds the value only in component memory.
 - Runtime data remains outside the checkout. Uninstall preserves metadata and vault files.
@@ -43,4 +44,4 @@ The controller is intended for a trusted local Windows account. A user who can a
 
 ## Fresh review outcomes
 
-A fresh read-only whole-branch review on 2026-10-29 found no Critical findings. The Important Compose-validation finding was addressed by restricting both the source and rendered project to the fixed service, settings, and one of the validated inference commands; regression tests reject added `privileged`/`devices` options and altered commands. The review's DSN-validation echo finding was addressed with a generic request-validation response and a regression test. One Minor metadata-completeness item is deferred: the vault records `created_at` but does not yet record a rotation timestamp or credential state. This does not change secret encryption or access control and remains a follow-up.
+A fresh read-only whole-branch review on 2026-10-29 found no Critical findings. The Important Compose-validation finding was addressed by restricting both the source and rendered project to the fixed service, settings, and one of the validated inference commands; regression tests reject added `privileged`/`devices` options, host ports, and altered commands. The review's DSN-validation echo finding was addressed with a generic request-validation response and a regression test. The Minor metadata-completeness finding was addressed in schema migration 7: vault metadata now records credential state and a rotation timestamp, while renames preserve the original rotation time.

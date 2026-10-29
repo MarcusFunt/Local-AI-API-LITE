@@ -15,7 +15,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.paths import RuntimePathError, ensure_private_directory
-from app.persistence import MetadataStore, MetadataStoreError
+from app.persistence import DATABASE_SCHEMA, MetadataStore, MetadataStoreError
 
 VAULT_SCHEMA = [
     (
@@ -33,6 +33,13 @@ VAULT_SCHEMA = [
         "token_digest TEXT PRIMARY KEY, secret_id TEXT NOT NULL "
         "REFERENCES vault_metadata(secret_id) ON DELETE CASCADE, expires_at TEXT NOT NULL, "
         "consumed_at TEXT)"
+    ),
+]
+VAULT_METADATA_SCHEMA = [
+    "ALTER TABLE vault_metadata ADD COLUMN rotated_at TEXT",
+    (
+        "ALTER TABLE vault_metadata ADD COLUMN state TEXT NOT NULL DEFAULT 'active' "
+        "CHECK (state IN ('active', 'disabled'))"
     ),
 ]
 REVEAL_LIFETIME = timedelta(minutes=1)
@@ -171,7 +178,12 @@ class SecretsStore:
         self.token_factory = token_factory or (lambda size: secrets.token_urlsafe(size))
         try:
             ensure_private_directory(self.key_file.parent)
-            self.store.migrate(5, VAULT_SCHEMA)
+            if self.store.schema_version() < 5:
+                self.store.migrate(5, VAULT_SCHEMA)
+            if self.store.schema_version() < 6:
+                self.store.migrate(6, DATABASE_SCHEMA)
+            if self.store.schema_version() < 7:
+                self.store.migrate(7, VAULT_METADATA_SCHEMA)
         except (RuntimePathError, MetadataStoreError):
             raise VaultLockedError() from None
 
@@ -206,6 +218,17 @@ class SecretsStore:
         return secret_id
 
     def update(self, secret_id: str, name: str, purpose: str, value: str) -> None:
+        self._replace_value(secret_id, name, purpose, value, mark_rotated=True)
+
+    def _replace_value(
+        self,
+        secret_id: str,
+        name: str,
+        purpose: str,
+        value: str,
+        *,
+        mark_rotated: bool,
+    ) -> None:
         if not isinstance(value, str) or not value or len(value) > MAX_SECRET_LENGTH:
             raise VaultAccessError()
         with self.store.transaction() as connection:
@@ -229,6 +252,11 @@ class SecretsStore:
                 "UPDATE vault_metadata SET name = ? WHERE secret_id = ?",
                 (name, secret_id),
             )
+            if mark_rotated:
+                connection.execute(
+                    "UPDATE vault_metadata SET rotated_at = ? WHERE secret_id = ?",
+                    (_format_time(_as_utc(self.clock())), secret_id),
+                )
             connection.execute(
                 "UPDATE vault_values SET nonce = ?, ciphertext = ? WHERE secret_id = ?",
                 (nonce, ciphertext, secret_id),
@@ -237,7 +265,7 @@ class SecretsStore:
 
     def rename(self, secret_id: str, name: str, purpose: str) -> None:
         value = self.get_for_service(secret_id, purpose)
-        self.update(secret_id, name, purpose, value)
+        self._replace_value(secret_id, name, purpose, value, mark_rotated=False)
 
     def delete(self, secret_id: str, purpose: str) -> None:
         with self.store.transaction() as connection:
@@ -249,10 +277,10 @@ class SecretsStore:
                 raise VaultAccessError()
             connection.execute("DELETE FROM vault_metadata WHERE secret_id = ?", (secret_id,))
 
-    def metadata(self) -> list[dict[str, str]]:
+    def metadata(self) -> list[dict[str, str | None]]:
         with self.store.transaction() as connection:
             rows = connection.execute(
-                "SELECT secret_id, name, integration, purpose, created_at "
+                "SELECT secret_id, name, integration, purpose, created_at, rotated_at, state "
                 "FROM vault_metadata ORDER BY created_at, secret_id"
             ).fetchall()
         return [
@@ -262,6 +290,8 @@ class SecretsStore:
                 "integration": row[2],
                 "purpose": row[3],
                 "created_at": row[4],
+                "rotated_at": row[5],
+                "state": row[6],
             }
             for row in rows
         ]
