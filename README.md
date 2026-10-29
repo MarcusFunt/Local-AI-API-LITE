@@ -64,3 +64,5 @@ docker compose config --quiet
 - The llama.cpp measurements in the companion project's M1.5 record are historical baseline data, not vLLM results.
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), [docs/API_CONTRACT.md](docs/API_CONTRACT.md), and [docs/CUTOVER_AND_ROLLBACK.md](docs/CUTOVER_AND_ROLLBACK.md) before connecting an application.
+
+The local dashboard is described in [dashboard/README.md](dashboard/README.md) and its [operator runbook](docs/DASHBOARD.md). It runs as a separate loopback-only CPU controller with authenticated status and lifecycle controls, bounded jobs, sanitized logs, and optional read-only PostgreSQL probes. Inference operations require a locally configured stable Compose project path and explicit administrator confirmation.

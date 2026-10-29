@@ -1,0 +1,30 @@
+version: 1
+profiles:
+  - id: baseline-4k-2
+    name: Baseline 4K / 2 sequences
+    model_id: RedHatAI/Qwen3.5-4B-quantized.w4a16
+    model_revision: 7a613872f394578b0b52b683ff4ac47516b4bcaf
+    model_alias: ddu-narrator
+    reasoning_parser: qwen3
+    engine: vLLM 0.32.0
+    image_ref: vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+    quantization: W4A16
+    max_model_len: 4096
+    max_num_seqs: 2
+    gpu_memory_utilization: 0.75
+    validation_state: validated
+    description: Conservative profile configured by .env.example.
+  - id: baseline-8k-4
+    name: Baseline 8K / 4 sequences
+    model_id: RedHatAI/Qwen3.5-4B-quantized.w4a16
+    model_revision: 7a613872f394578b0b52b683ff4ac47516b4bcaf
+    model_alias: ddu-narrator
+    reasoning_parser: qwen3
+    engine: vLLM 0.32.0
+    image_ref: vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+    quantization: W4A16
+    max_model_len: 8192
+    max_num_seqs: 4
+    gpu_memory_utilization: 0.75
+    validation_state: validated
+    description: Host-tested alternative; the stable model alias is unchanged.
