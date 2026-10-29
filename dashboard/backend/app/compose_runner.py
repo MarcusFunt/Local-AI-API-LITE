@@ -13,6 +13,7 @@ from .configuration import (
     PROJECT_NAME,
     SERVICE_NAME,
     ConfigurationError,
+    load_allowlisted_profile,
     update_profile_environment,
     validate_compose_root,
 )
@@ -20,6 +21,13 @@ from .docker_status import _configuration_from_command
 from .profiles import load_profiles, match_profile
 
 _CONTAINER_ID = re.compile(r"^[0-9a-fA-F]{12,64}$")
+_CONTRACT_CHECK_SCRIPT = (
+    "import json,sys,urllib.request; "
+    "urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5).read(); "
+    "models=json.load(urllib.request.urlopen('http://127.0.0.1:8080/v1/models',timeout=5)); "
+    "ids=[item.get('id') for item in models.get('data',[]) if isinstance(item,dict)]; "
+    "raise SystemExit(0 if sys.argv[1] in ids else 1)"
+)
 
 
 class ComposeRunnerError(RuntimeError):
@@ -71,7 +79,7 @@ class ComposeRunner:
         except (OSError, subprocess.SubprocessError) as exc:
             raise ComposeRunnerError(f"Docker command failed: {type(exc).__name__}") from None
         if result.returncode != 0:
-            raise ComposeRunnerError("Docker Compose rejected the configured project")
+            raise ComposeRunnerError("Configured Docker command was rejected")
         return result
 
     def validate_configuration(self, env_file: Path | None = None) -> dict:
@@ -266,6 +274,37 @@ class ComposeRunner:
             if isinstance(aliases, list) and "ddu-llm" in aliases:
                 return False
         return True
+
+    def verify_contract(self, profile_id: str) -> bool:
+        """Check the fixed local health and model-alias contract without generating a prompt."""
+        try:
+            profile = load_allowlisted_profile(profile_id)
+            runtime = self.inspect_project()
+            if (
+                runtime["runtime_state"] != "running"
+                or runtime.get("active_profile_id") != profile_id
+            ):
+                return False
+            result = self._execute(
+                self._compose_args() + ["ps", "--all", "--quiet", SERVICE_NAME]
+            )
+            ids = [item.strip() for item in result.stdout.splitlines() if item.strip()]
+            if len(ids) != 1 or not _CONTAINER_ID.fullmatch(ids[0]):
+                return False
+            self._execute(
+                [
+                    self.docker_path,
+                    "exec",
+                    ids[0],
+                    "python3",
+                    "-c",
+                    _CONTRACT_CHECK_SCRIPT,
+                    str(profile["model_alias"]),
+                ]
+            )
+            return True
+        except (ConfigurationError, ComposeRunnerError):
+            return False
 
     def stop_vllm(self) -> dict[str, str]:
         before = self.inspect_project()

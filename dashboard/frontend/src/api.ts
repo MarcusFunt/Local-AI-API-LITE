@@ -44,6 +44,35 @@ export interface Profile {
   description: string;
 }
 
+export type DesiredInferenceState = "running" | "stopped";
+
+export interface OperationRecord {
+  operation_id: string;
+  kind: string;
+  phase: string;
+  started_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  requested_profile: string | null;
+  requested_state: DesiredInferenceState | null;
+  outcome_category: string | null;
+  recovery_state: Record<string, unknown>;
+}
+
+export interface ControlState {
+  desired_state: DesiredInferenceState;
+  selected_profile_id: string | null;
+  active_profile_id: string | null;
+  last_known_good_profile_id: string | null;
+  updated_at: number;
+}
+
+export interface OperationStateSnapshot {
+  configured: boolean;
+  control_state: ControlState;
+  latest_operation: OperationRecord | null;
+}
+
 export interface ModelConfiguration {
   model_id: string;
   model_revision: string | null;
@@ -125,4 +154,46 @@ export function getStatus(): Promise<DashboardStatus> {
 
 export function getProfiles(): Promise<{ profiles: Profile[] }> {
   return getJson<{ profiles: Profile[] }>("/api/control/v1/profiles");
+}
+
+async function postOperation(
+  path: string,
+  csrfToken: string,
+  body?: { profile_id: string },
+): Promise<OperationRecord> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    credentials: "same-origin",
+    cache: "no-store",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    // Profile activation can legitimately spend several minutes loading model weights.
+    signal: AbortSignal.timeout(11 * 60 * 1000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  return (await response.json()) as OperationRecord;
+}
+
+export function getOperationState(): Promise<OperationStateSnapshot> {
+  return getJson<OperationStateSnapshot>("/api/control/v1/operations/state");
+}
+
+export function startInference(profileId: string, csrfToken: string): Promise<OperationRecord> {
+  return postOperation("/api/control/v1/operations/start", csrfToken, { profile_id: profileId });
+}
+
+export function stopInference(csrfToken: string): Promise<OperationRecord> {
+  return postOperation("/api/control/v1/operations/stop", csrfToken);
+}
+
+export function restartInference(csrfToken: string): Promise<OperationRecord> {
+  return postOperation("/api/control/v1/operations/restart", csrfToken);
+}
+
+export function applyProfile(profileId: string, csrfToken: string): Promise<OperationRecord> {
+  return postOperation("/api/control/v1/operations/apply-profile", csrfToken, { profile_id: profileId });
 }

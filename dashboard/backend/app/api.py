@@ -11,16 +11,65 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .auth import AuthService, require_session
+from .compose_runner import ComposeRunner
+from .configuration import LocalSettingsStore
+from .control_state import ActivityGate, OperationCoordinator
 from .docker_status import DockerReader
 from .paths import data_directory
 from .persistence import MetadataStore
 from .profiles import DEFAULT_PROFILES_PATH, load_profiles, public_profile
 from .routes.auth import router as auth_router
+from .routes.operations import router as operations_router
 from .status_cache import StatusCache
 from .telemetry import read_host_telemetry
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FRONTEND_DIST = ROOT / "dashboard" / "frontend" / "dist"
+
+
+class ComposeRunnerProvider:
+    """Resolve the explicitly configured project for every fixed Compose operation."""
+
+    timeout = 150
+
+    def __init__(self, settings: LocalSettingsStore) -> None:
+        self.settings = settings
+
+    @property
+    def project_root(self) -> Path | None:
+        return self.settings.load_compose_root()
+
+    def _runner(self) -> ComposeRunner:
+        root = self.project_root
+        if root is None:
+            raise RuntimeError("Compose project is not configured")
+        return ComposeRunner(root, timeout=self.timeout)
+
+    def inspect_project(self) -> dict[str, str]:
+        return self._runner().inspect_project()
+
+    def stop_vllm(self) -> dict[str, str]:
+        return self._runner().stop_vllm()
+
+    def start_vllm(self) -> dict[str, str]:
+        return self._runner().start_vllm()
+
+    def configure_profile(self, profile_id: str) -> None:
+        self._runner().configure_profile(profile_id)
+
+    def assert_alias_released(self) -> bool:
+        return self._runner().assert_alias_released()
+
+    def verify_contract(self, profile_id: str) -> bool:
+        return self._runner().verify_contract(profile_id)
+
+
+class ComposeContractChecker:
+    def __init__(self, runner: ComposeRunnerProvider) -> None:
+        self.runner = runner
+
+    def check(self, profile_id: str) -> bool:
+        return self.runner.verify_contract(profile_id)
 
 
 def _now() -> str:
@@ -49,6 +98,10 @@ def create_app(
     metadata_path: Path | None = None,
     auth_service: AuthService | None = None,
     status_cache: Any | None = None,
+    settings_store: Any | None = None,
+    operation_coordinator: Any | None = None,
+    operation_runner: Any | None = None,
+    contract_checker: Any | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Local-AI-API-LITE Dashboard",
@@ -63,6 +116,7 @@ def create_app(
     app.state.frontend_dist = frontend_dist or DEFAULT_FRONTEND_DIST
     store = MetadataStore(metadata_path or data_directory() / "metadata.sqlite3")
     app.state.auth_service = auth_service or AuthService(store)
+    app.state.local_settings_store = settings_store or LocalSettingsStore()
     app.include_router(auth_router)
 
     def docker_snapshot(deadline: float) -> dict[str, Any]:
@@ -106,6 +160,21 @@ def create_app(
         max_age=5,
         command_budget=8,
     )
+    runner = operation_runner or ComposeRunnerProvider(app.state.local_settings_store)
+    checker = contract_checker or ComposeContractChecker(runner)
+    app.state.operation_coordinator = operation_coordinator or OperationCoordinator(
+        settings=app.state.local_settings_store,
+        runner=runner,
+        status_reader=app.state.status_cache,
+        contract_checker=checker,
+        gate=ActivityGate(store),
+    )
+    app.include_router(operations_router)
+    if operation_coordinator is None:
+        try:
+            app.state.operation_coordinator.reconcile_after_restart()
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+            pass
 
     def profile_registry() -> list[dict[str, Any]]:
         return load_profiles(app.state.profiles_path)

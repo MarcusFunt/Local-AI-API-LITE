@@ -177,6 +177,23 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .profile-image code { overflow: hidden; color: #849b8a; font: 8px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .profile-boundary { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 11px 13px; border: 1px solid #333c37; border-radius: 7px; color: #7f8e84; background: #171c1a; font-size: 10px; line-height: 1.5; }
 .boundary-icon { display: grid; place-items: center; flex: 0 0 auto; width: 14px; height: 14px; border: 1px solid #60756a; border-radius: 50%; color: #91b49c; font: 9px var(--mono); }
+.operation-panel { margin-top: 13px; padding: 19px 20px; }
+.operation-desired { margin: 14px 0 0; color: #dce5de; font: 11px var(--mono); }
+.operation-unconfigured, .operation-error, .operation-notice, .operation-loading { margin: 12px 0 0; padding: 10px 12px; border: 1px solid #35423a; border-radius: 6px; color: #aab8ae; background: #151b17; font-size: 10px; line-height: 1.5; }
+.operation-unconfigured { border-color: #4c4738; color: #d4c49a; background: #211f18; }
+.operation-error { border-color: #62443c; color: #e5ada2; background: #2a201d; }
+.operation-notice { border-color: #365442; color: #a9d5b7; background: #1b2921; }
+.operation-loading { border-color: #365442; color: #b6d8bf; background: #1a251e; }
+.operation-controls { display: grid; grid-template-columns: minmax(190px, 1.5fr) repeat(4, minmax(110px, 1fr)); align-items: end; gap: 9px; margin-top: 16px; }
+.operation-profile { display: grid; gap: 7px; color: #a5b1a9; font-size: 10px; }
+.operation-profile select { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid #35413a; border-radius: 6px; color: #dce5de; background: #111613; font: 10px var(--mono); }
+.operation-profile select:focus { outline: 2px solid #65bd9460; border-color: #69a780; }
+.operation-controls .primary-button, .operation-controls .secondary-button { margin-top: 0; }
+.operation-confirmation { margin-top: 15px; padding: 15px 16px; border: 1px solid #6b5d3e; border-radius: 7px; background: #211f18; }
+.operation-confirmation h3 { margin: 0; color: #e9dcba; font: 600 13px var(--display); }
+.operation-confirmation p { margin: 8px 0 0; color: #a9a08a; font-size: 10px; line-height: 1.5; }
+.operation-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.operation-confirm-actions .secondary-button { margin-top: 0; }
 .app-footer { display: flex; justify-content: space-between; gap: 10px; margin: 0 auto; max-width: 1440px; padding: 17px 0 21px; border-top: 1px solid #222a26; color: #59665e; font: 8px var(--mono); letter-spacing: .06em; }
 .app-footer i { display: inline-block; width: 4px; height: 4px; margin: 0 6px 1px; border-radius: 50%; background: #6d9b7c; }
 
@@ -221,6 +238,7 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .main-area { padding: 0 26px; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .observed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .operation-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .sidebar { position: static; width: auto; min-height: auto; padding: 15px 17px 11px; border-right: 0; border-bottom: 1px solid #252d29; }
@@ -243,6 +261,9 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .metric-card { min-height: 116px; padding: 13px 12px 10px; }
   .metric-value { font-size: 16px; }
   .lower-grid, .profile-grid { grid-template-columns: 1fr; }
+  .operation-controls { grid-template-columns: 1fr; }
+  .operation-confirm-actions { justify-content: stretch; }
+  .operation-confirm-actions button { flex: 1; }
   .observed-grid { gap: 14px 9px; }
   .app-footer { font-size: 7px; }
 }

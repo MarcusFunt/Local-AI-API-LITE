@@ -170,7 +170,7 @@ function AuthenticatedDashboard({
         {error && <div className="connection-alert" role="alert"><span className="alert-symbol">!</span><div><strong>Controller connection issue</strong><span>{error}. The last successful snapshot remains on screen.</span></div></div>}
         {page !== "Settings" && <div className="page-state-line"><span className="eyebrow">INFERENCE STATE</span><StateBadge state={statusText} /><span className="controller-indicator"><span />CONTROLLER {status?.controller.state.toUpperCase() ?? "CONNECTING"}</span></div>}
         {page === "Overview" && <OverviewPage status={status} samples={samples} />}
-        {page === "Models" && <ModelsPage status={status} profiles={profiles} />}
+        {page === "Models" && <ModelsPage status={status} profiles={profiles} csrfToken={authState.csrfToken} />}
         {page === "Settings" && <SettingsPage
           authClient={authClient}
           csrfToken={authState.csrfToken}

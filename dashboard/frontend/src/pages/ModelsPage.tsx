@@ -1,8 +1,10 @@
 import type { DashboardStatus, Profile } from "../api";
+import { OperationPanel } from "./OperationPanel";
 
 interface ModelsPageProps {
   status: DashboardStatus | null;
   profiles: Profile[];
+  csrfToken: string;
 }
 
 function StateBadge({ state }: { state: string }) {
@@ -32,7 +34,7 @@ function ProfileCard({ profile, active, index }: { profile: Profile; active: boo
   );
 }
 
-export function ModelsPage({ status, profiles }: ModelsPageProps) {
+export function ModelsPage({ status, profiles, csrfToken }: ModelsPageProps) {
   const activeProfileId = status?.active_profile?.id;
   const configuration = status?.inference.configuration;
   return (
@@ -40,8 +42,9 @@ export function ModelsPage({ status, profiles }: ModelsPageProps) {
       <section className="intro-panel">
         <span className="eyebrow">PINNED CONFIGURATIONS</span>
         <h2>Validated on this host</h2>
-        <p>These profiles are displayed for reference. Profile changes are not enabled in this read-only phase.</p>
+        <p>Choose a validated local profile and manage inference with fixed, authenticated controls. No arbitrary commands or prompt content are accepted.</p>
       </section>
+      <OperationPanel profiles={profiles} csrfToken={csrfToken} />
       <section className="observed-config panel">
         <div className="panel-heading"><div><span className="eyebrow">OBSERVED AT RUNTIME</span><h2>Current model configuration</h2></div><StateBadge state={status?.inference.state ?? "Unknown"} /></div>
         {configuration ? <div className="observed-grid">
@@ -58,7 +61,7 @@ export function ModelsPage({ status, profiles }: ModelsPageProps) {
         {profiles.map((profile, index) => <ProfileCard key={profile.id} profile={profile} active={activeProfileId === profile.id} index={index} />)}
         {profiles.length === 0 && <div className="empty-state panel">The versioned profile registry is unavailable.</div>}
       </div>
-      <div className="profile-boundary"><span className="boundary-icon">i</span><span>Only the original pinned model and host-tested settings appear here. Applying profiles is intentionally unavailable in Phase 1.</span></div>
+      <div className="profile-boundary"><span className="boundary-icon">i</span><span>Only fixed, validated profile IDs are accepted. Controls remain unavailable until an operator configures a stable local Compose project. A deliberate Stop remains the desired state after dashboard restarts.</span></div>
     </div>
   );
 }

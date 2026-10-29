@@ -77,11 +77,20 @@ The command validates the pinned Compose project, external `ddu_inference_bus` n
 - `GET /api/control/v1/controller/health` is minimal controller liveness and does not consult inference.
 - `GET /auth/state` reports whether one-time setup is required and whether the browser's HttpOnly cookie has an active session.
 - `GET /api/control/v1/status` requires an administrator session and returns cached inference state, the observed runtime configuration, telemetry, and snapshot freshness/error metadata.
-- `GET /api/control/v1/telemetry` and `GET /api/control/v1/profiles` require an administrator session.
+- `GET /api/control/v1/telemetry`, `GET /api/control/v1/profiles`, and `GET /api/control/v1/operations/state` require an administrator session.
+- `POST /api/control/v1/operations/start`, `/stop`, `/restart`, and `/apply-profile` require an administrator session and CSRF token. Start and profile changes accept only a versioned profile ID; the API exposes no shell, Compose argument, prompt, or arbitrary command input.
+
+## Inference operations
+
+The Models page offers fixed Start, Stop, Restart, and Apply Profile actions. Each action requires an explicit confirmation. Controls remain disabled until an operator configures a stable Compose project root using the local CLI. Only one inference or benchmark activity can hold the shared operation gate at a time.
+
+The dashboard records desired state and the latest operation in local SQLite metadata. Desired state starts as `stopped`, and a deliberate Stop remains stopped after a controller or browser restart; starting inference always requires an operator action. Long model loading is shown as an active operation. Candidate failures report whether a last-known-good profile was restored. Profile activation waits for container health and the fixed `/health` and `/v1/models` contract checks before reporting success. Those checks do not send prompts or collect request/response content.
+
+The fixed controller operations can start, stop, or recreate only the validated `vllm` service in the explicitly configured project. They do not run `compose down`, remove containers or volumes, change networks, publish host ports, or accept arbitrary commands. A profile switch preserves the model-cache volume and the stable `ddu-llm` alias. Dashboard restart reconciliation is read-only and does not start or stop inference automatically.
 
 The status handler reads from memory immediately while a single bounded worker refreshes Docker status and host telemetry. A successful Docker query with no matching container is `Stopped`; a failed query is `Unknown/Unavailable`. The UI polls every five seconds while visible, backs off to thirty seconds while hidden, allows one in-flight status request, and keeps up to 120 samples in browser memory. It does not write metrics or model data to disk.
 
-No inference mutation, database monitoring, benchmark, or log routes are enabled at this stage. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
+Database monitoring and log routes are not enabled at this stage. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
 
 ## Checks
 

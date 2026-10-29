@@ -238,3 +238,48 @@ def test_stopped_runtime_may_have_disconnected_network_alias(tmp_path):
 
     assert result["runtime_state"] == "exited"
     assert result["active_profile_id"] is None
+
+
+
+
+def test_contract_check_uses_fixed_no_prompt_command_and_expected_model(tmp_path):
+    compose_runner = load_dashboard_module("compose_runner")
+    root, cache_source = _project_root(tmp_path)
+    calls: list[list[str]] = []
+    runtime = _runtime_container(cache_source)
+    runtime["Config"]["Cmd"] = [
+        "RedHatAI/Qwen3.5-4B-quantized.w4a16",
+        "--revision",
+        "7a613872f394578b0b52b683ff4ac47516b4bcaf",
+        "--served-model-name",
+        "ddu-narrator",
+        "--reasoning-parser",
+        "qwen3",
+        "--max-model-len",
+        "4096",
+        "--max-num-seqs",
+        "2",
+        "--gpu-memory-utilization",
+        "0.75",
+    ]
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert kwargs["shell"] is False
+        if "config" in args:
+            return subprocess.CompletedProcess(args, 0, json.dumps(_rendered_config(cache_source)), "")
+        if "ps" in args:
+            return subprocess.CompletedProcess(args, 0, "abcdef1234567890\n", "")
+        if args[1] == "inspect":
+            return subprocess.CompletedProcess(args, 0, json.dumps([runtime]), "")
+        if args[1] == "exec":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        raise AssertionError(f"unexpected Docker command: {args}")
+
+    runner = compose_runner.ComposeRunner(root, run=run, docker_path="docker")
+
+    assert runner.verify_contract("baseline-4k-2") is True
+    execution = next(args for args in calls if len(args) > 1 and args[1] == "exec")
+    assert execution[:5] == ["docker", "exec", "abcdef1234567890", "python3", "-c"]
+    assert execution[-1] == "ddu-narrator"
+    assert "chat/completions" not in execution[5]
