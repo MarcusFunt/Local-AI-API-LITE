@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from conftest import load_dashboard_module
@@ -190,3 +192,28 @@ def test_database_credentials_are_read_only_vault_values():
 
     assert result["state"] == "Available"
     assert secret_store.calls == [(DATABASE_ID, "database-monitor")]
+
+
+def test_default_connector_sets_read_only_and_statement_timeout(monkeypatch):
+    databases = load_dashboard_module("databases")
+    calls = []
+    connection = SimpleNamespace(read_only=False)
+
+    def connect(dsn, **kwargs):
+        calls.append((dsn, kwargs))
+        return connection
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=connect))
+
+    result = databases._connect_postgres(
+        "postgresql://user:password@localhost/db",
+        connect_timeout=2,
+        query_timeout=1.25,
+        read_only=True,
+    )
+
+    assert result.read_only is True
+    assert calls[0][1]["connect_timeout"] == 2
+    assert calls[0][1]["autocommit"] is False
+    assert "statement_timeout=1250" in calls[0][1]["options"]
+    assert "default_transaction_read_only=on" in calls[0][1]["options"]

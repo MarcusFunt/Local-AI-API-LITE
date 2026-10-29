@@ -181,6 +181,22 @@ def test_dsn_is_write_only_and_never_returned(tmp_path):
     assert vault.metadata() == []
 
 
+def test_invalid_dsn_is_not_echoed_in_validation_error(tmp_path):
+    client, _vault, _monitor = make_client(tmp_path)
+    client.setup_admin()
+    rejected_dsn = "postgresql://private-user:private-password@db.invalid/" + "x" * 4100
+
+    response = client.post(
+        "/api/control/v1/databases",
+        json_body={"name": "Analytics", "dsn": rejected_dsn},
+        headers={"X-CSRF-Token": client.csrf_token},
+    )
+
+    assert response.status_code == 422
+    assert rejected_dsn not in response.text
+    assert "private-password" not in response.text
+
+
 def test_unavailable_database_does_not_hide_other_dashboard_pages(tmp_path):
     client, _vault, _monitor = make_client(tmp_path, monitor_state="Unavailable")
     client.setup_admin()

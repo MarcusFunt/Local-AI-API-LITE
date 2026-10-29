@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -121,6 +122,11 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
+
+    @app.exception_handler(RequestValidationError)
+    def sanitized_validation_error(_request: Any, _exception: RequestValidationError) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": "Invalid request"})
+
     app.state.docker_reader = docker_reader or DockerReader(docker_path=shutil.which("docker"))
     app.state.telemetry_reader = telemetry_reader or read_host_telemetry
     app.state.profiles_path = profiles_path or DEFAULT_PROFILES_PATH

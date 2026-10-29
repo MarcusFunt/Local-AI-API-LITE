@@ -60,7 +60,7 @@ Dashboard sessions last eight hours and use a server-managed HttpOnly cookie. Th
 
 On Windows, runtime metadata lives under `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\metadata.sqlite3`. The containing directory is restricted to the current Windows user. Encrypted vault values are stored separately from descriptive metadata. The random vault root key is protected with Windows DPAPI CurrentUser and belongs at `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\vault\root-key.dpapi`; it is never stored in plaintext. If the current user's Windows profile or DPAPI key is unavailable, the vault is locked and does not fall back to plaintext. The installer does not create or delete vault data.
 
-The Scheduled Task runs only in the Docker Desktop user's interactive session, with limited privileges. The controller binds to loopback and performs fixed Docker status queries. It does not mount a Docker socket or accept arbitrary commands. The model endpoint remains private on `ddu_inference_bus` with no published host port. Inference controls remain unavailable until the control API and UI are implemented; configuring a project root alone does not start or change inference.
+The Scheduled Task runs only in the Docker Desktop user's interactive session, with limited privileges. The controller binds to loopback and performs fixed Docker queries. It does not mount a Docker socket or accept arbitrary commands. The model endpoint remains private on `ddu_inference_bus` with no published host port. Inference controls stay unavailable until an operator configures a stable Compose project root in local settings; that configuration alone does not start or change inference.
 
 ## Explicit Compose project configuration
 
@@ -122,6 +122,7 @@ From the repository root:
 .\dashboard\backend\.venv\Scripts\python.exe -m ruff check scripts tests dashboard\backend\app dashboard\backend\tests
 npm --prefix .\dashboard\frontend ci
 npm --prefix .\dashboard\frontend test
+npm --prefix .\dashboard\frontend run typecheck
 npm --prefix .\dashboard\frontend run build
 docker compose --env-file .env.example config --quiet
 ```
@@ -139,6 +140,8 @@ These checks require a separately authorized operator window. Do not stop, resta
 - [ ] Verify expected model alias, revision, image digest, no prompt/response collection, and no credential values in status or metadata.
 
 The controller has not been installed or launched for this implementation. The host-level checks above remain pending. Existing Phase 0 values below are historical baseline observations only.
+
+See [DASHBOARD_SECURITY.md](DASHBOARD_SECURITY.md) for the security boundary and [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated automated evidence and pending operator checks.
 
 ## Phase 0 baseline capture
 

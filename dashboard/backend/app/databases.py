@@ -241,9 +241,11 @@ def _connect_postgres(
 
     statement_timeout_ms = max(1, math.ceil(query_timeout * 1000))
     options = f"-c statement_timeout={statement_timeout_ms} -c default_transaction_read_only=on"
-    return psycopg.connect(
+    connection = psycopg.connect(
         dsn,
         connect_timeout=max(1, math.ceil(connect_timeout)),
         options=options,
         autocommit=False,
     )
+    connection.read_only = True
+    return connection

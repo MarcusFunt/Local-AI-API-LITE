@@ -1,8 +1,10 @@
 # Local dashboard
 
-The dashboard is a local React/Vite UI and a small FastAPI controller. The current release provides authenticated, read-only status, profile, and host telemetry views. It does not start, stop, restart, or reconfigure inference.
+The dashboard is a local React/Vite UI and a small FastAPI controller. It provides authenticated status, inference lifecycle controls, bounded jobs and history, sanitized service logs, and optional read-only PostgreSQL monitoring. It binds only to loopback. Start, stop, restart, and profile actions require a stable Compose project path in local settings and an explicit confirmation.
 
 See the [operator runbook](../docs/DASHBOARD.md) for Windows installation, administrator setup and recovery, runtime paths, security boundaries, and the manual host acceptance checklist.
+
+See the [security review](../docs/DASHBOARD_SECURITY.md) and [acceptance record](../docs/DASHBOARD_ACCEPTANCE.md) for the current boundaries, automated evidence, and pending host checks.
 
 ## Requirements
 

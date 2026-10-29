@@ -33,10 +33,11 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/frontend/package-lock.json
 
-      - name: Test and build dashboard frontend
+      - name: Test, typecheck, and build dashboard frontend
         run: |
           npm ci --prefix dashboard/frontend
           npm --prefix dashboard/frontend test
+          npm --prefix dashboard/frontend run typecheck
           npm --prefix dashboard/frontend run build
 
       - name: Run protocol and configuration tests

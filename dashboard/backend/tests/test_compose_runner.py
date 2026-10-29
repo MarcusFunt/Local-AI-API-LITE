@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from conftest import load_dashboard_module
 
 PROJECT_NAME = "local-ai-api-lite"
@@ -16,15 +17,64 @@ def _rendered_config(cache_source: Path) -> dict:
         "name": PROJECT_NAME,
         "services": {
             "vllm": {
+                "restart": "unless-stopped",
+                "command": [
+                    "RedHatAI/Qwen3.5-4B-quantized.w4a16",
+                    "--revision",
+                    "7a613872f394578b0b52b683ff4ac47516b4bcaf",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "8080",
+                    "--served-model-name",
+                    "ddu-narrator",
+                    "--language-model-only",
+                    "--max-model-len",
+                    "4096",
+                    "--max-num-seqs",
+                    "2",
+                    "--gpu-memory-utilization",
+                    "0.75",
+                    "--reasoning-parser",
+                    "qwen3",
+                    "--enable-per-request-metrics",
+                ],
+                "entrypoint": None,
+                "environment": {
+                    "HF_HOME": "/root/.cache/huggingface",
+                    "HF_HUB_CACHE": "/root/.cache/huggingface/hub",
+                    "HF_HUB_DISABLE_TELEMETRY": "1",
+                    "VLLM_LOGGING_LEVEL": "INFO",
+                },
+                "gpus": [{"count": -1}],
                 "image": IMAGE_REF,
+                "shm_size": "4294967296",
+                "stop_grace_period": "2m0s",
                 "volumes": [
-                    {"type": "bind", "source": str(cache_source), "target": CACHE_DESTINATION}
+                    {
+                        "type": "bind",
+                        "source": str(cache_source),
+                        "target": CACHE_DESTINATION,
+                        "bind": {},
+                    }
                 ],
                 "networks": {"inference": {"aliases": ["ddu-llm"]}},
+                "healthcheck": {
+                    "test": [
+                        "CMD",
+                        "python3",
+                        "-c",
+                        "import urllib.request; urllib.request.urlopen( 'http://127.0.0.1:8080/health', timeout=5)",
+                    ],
+                    "timeout": "10s",
+                    "interval": "30s",
+                    "retries": 5,
+                    "start_period": "5m0s",
+                },
             }
         },
         "networks": {
-            "inference": {"name": "ddu_inference_bus", "external": True}
+            "inference": {"name": "ddu_inference_bus", "ipam": {}, "external": True}
         },
     }
 
@@ -61,8 +111,47 @@ def _project_root(tmp_path: Path) -> tuple[Path, Path]:
 services:
   vllm:
     image: {IMAGE_REF}
+    command:
+      - "${{MODEL_ID:?Set MODEL_ID in .env}}"
+      - --revision
+      - "${{MODEL_REVISION:?Set MODEL_REVISION in .env}}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --served-model-name
+      - "${{MODEL_ALIAS:-ddu-narrator}}"
+      - --language-model-only
+      - --max-model-len
+      - "${{MAX_MODEL_LEN:-4096}}"
+      - --max-num-seqs
+      - "${{MAX_NUM_SEQS:-2}}"
+      - --gpu-memory-utilization
+      - "${{GPU_MEMORY_UTILIZATION:-0.75}}"
+      - --reasoning-parser
+      - "${{REASONING_PARSER:-qwen3}}"
+      - --enable-per-request-metrics
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_CACHE: /root/.cache/huggingface/hub
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_LOGGING_LEVEL: INFO
     volumes:
       - ${{HF_CACHE_DIR:?set HF_CACHE_DIR}}:{CACHE_DESTINATION}
+    gpus: all
+    shm_size: 4gb
+    restart: unless-stopped
+    stop_grace_period: 2m
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen( 'http://127.0.0.1:8080/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
     networks:
       inference:
         aliases: [ddu-llm]
@@ -179,6 +268,25 @@ def test_runtime_label_or_network_mismatch_fails_closed(tmp_path):
         assert "project" in str(exc).casefold() or "runtime" in str(exc).casefold()
     else:
         raise AssertionError("a mismatched runtime project must be rejected")
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("privileged", True),
+        ("devices", [{"path_on_host": "/dev/nvidia0", "path_in_container": "/dev/nvidia0"}]),
+        ("ports", [{"target": 8080, "published": "8080", "protocol": "tcp"}]),
+        ("command", ["/bin/sh", "-c", "unexpected service command"]),
+    ],
+)
+def test_rendered_configuration_rejects_unallowlisted_service_options(tmp_path, setting, value):
+    compose_runner = load_dashboard_module("compose_runner")
+    _root, cache_source = _project_root(tmp_path)
+    rendered = _rendered_config(cache_source)
+    rendered["services"]["vllm"][setting] = value
+
+    with pytest.raises(compose_runner.ComposeRunnerError):
+        compose_runner.ComposeRunner._validate_rendered_configuration(rendered)
 
 
 def test_old_service_must_release_network_alias_before_replacement_start(tmp_path):

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 from conftest import load_dashboard_module
 
 PROJECT_NAME = "local-ai-api-lite"
@@ -17,8 +18,47 @@ def make_project(root: Path, *, name: str = PROJECT_NAME) -> Path:
 services:
   vllm:
     image: {IMAGE_REF}
+    command:
+      - "${{MODEL_ID:?Set MODEL_ID in .env}}"
+      - --revision
+      - "${{MODEL_REVISION:?Set MODEL_REVISION in .env}}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --served-model-name
+      - "${{MODEL_ALIAS:-ddu-narrator}}"
+      - --language-model-only
+      - --max-model-len
+      - "${{MAX_MODEL_LEN:-4096}}"
+      - --max-num-seqs
+      - "${{MAX_NUM_SEQS:-2}}"
+      - --gpu-memory-utilization
+      - "${{GPU_MEMORY_UTILIZATION:-0.75}}"
+      - --reasoning-parser
+      - "${{REASONING_PARSER:-qwen3}}"
+      - --enable-per-request-metrics
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_CACHE: /root/.cache/huggingface/hub
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_LOGGING_LEVEL: INFO
     volumes:
       - ${{HF_CACHE_DIR:?set HF_CACHE_DIR}}:/root/.cache/huggingface
+    gpus: all
+    shm_size: 4gb
+    restart: unless-stopped
+    stop_grace_period: 2m
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen( 'http://127.0.0.1:8080/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
     networks:
       inference:
         aliases:
@@ -77,6 +117,27 @@ def test_project_root_must_be_existing_expected_compose_project(tmp_path):
     with pytest.raises(configuration.ConfigurationError):
         settings.configure_compose_root(wrong_project)
     assert settings.load_compose_root() is None
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("privileged", True),
+        ("devices", ["/dev/nvidia0"]),
+        ("ports", ["8080:8080"]),
+        ("command", ["/bin/sh", "-c", "unexpected service command"]),
+    ],
+)
+def test_compose_source_rejects_unallowlisted_service_options(tmp_path, setting, value):
+    configuration = load_dashboard_module("configuration")
+    root = make_project(tmp_path / "project")
+    compose_path = root / "compose.yaml"
+    document = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    document["services"]["vllm"][setting] = value
+    compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(configuration.ConfigurationError):
+        configuration.validate_compose_root(root)
 
 
 def test_explicit_project_is_saved_only_after_configuration_validation(tmp_path):

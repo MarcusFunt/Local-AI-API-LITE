@@ -7,12 +7,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .configuration import (
+    _RENDERED_HEALTHCHECK,
+    _RENDERED_SERVICE_KEYS,
+    _RENDERED_TOP_LEVEL_KEYS,
+    _SERVICE_ENVIRONMENT,
     CACHE_DESTINATION,
     IMAGE_REF,
     NETWORK_NAME,
     PROJECT_NAME,
     SERVICE_NAME,
     ConfigurationError,
+    _command_is_allowlisted,
     load_allowlisted_profile,
     update_profile_environment,
     validate_compose_root,
@@ -93,28 +98,56 @@ class ComposeRunner:
 
     @staticmethod
     def _validate_rendered_configuration(rendered: object) -> dict:
-        if not isinstance(rendered, dict) or rendered.get("name") != PROJECT_NAME:
+        if (
+            not isinstance(rendered, dict)
+            or set(rendered) != _RENDERED_TOP_LEVEL_KEYS
+            or rendered.get("name") != PROJECT_NAME
+        ):
             raise ComposeRunnerError("Rendered Compose project identity does not match")
         services = rendered.get("services")
         if not isinstance(services, dict) or set(services) != {SERVICE_NAME}:
             raise ComposeRunnerError("Rendered Compose project has an unexpected service set")
         service = services[SERVICE_NAME]
-        if not isinstance(service, dict) or service.get("image") != IMAGE_REF:
+        if (
+            not isinstance(service, dict)
+            or set(service) != _RENDERED_SERVICE_KEYS
+            or service.get("image") != IMAGE_REF
+        ):
             raise ComposeRunnerError("Rendered Compose service image does not match")
-        if service.get("ports"):
-            raise ComposeRunnerError("Rendered Compose service must not publish host ports")
+        if not _command_is_allowlisted(service.get("command")):
+            raise ComposeRunnerError("Rendered Compose service command is not allowlisted")
+        if (
+            service.get("entrypoint") is not None
+            or service.get("environment") != _SERVICE_ENVIRONMENT
+            or service.get("gpus") != [{"count": -1}]
+            or service.get("shm_size") != "4294967296"
+            or service.get("restart") != "unless-stopped"
+            or service.get("stop_grace_period") != "2m0s"
+            or service.get("healthcheck") != _RENDERED_HEALTHCHECK
+        ):
+            raise ComposeRunnerError("Rendered Compose service runtime settings do not match")
         networks = service.get("networks")
         inference = networks.get("inference") if isinstance(networks, dict) else None
         aliases = inference.get("aliases") if isinstance(inference, dict) else None
-        if not isinstance(aliases, list) or "ddu-llm" not in aliases:
+        if (
+            not isinstance(networks, dict)
+            or set(networks) != {"inference"}
+            or not isinstance(inference, dict)
+            or set(inference) != {"aliases"}
+            or aliases != ["ddu-llm"]
+        ):
             raise ComposeRunnerError("Rendered Compose service is missing the inference alias")
         rendered_networks = rendered.get("networks")
         project_network = (
             rendered_networks.get("inference") if isinstance(rendered_networks, dict) else None
         )
         if (
-            not isinstance(project_network, dict)
+            not isinstance(rendered_networks, dict)
+            or set(rendered_networks) != {"inference"}
+            or not isinstance(project_network, dict)
+            or set(project_network) != {"name", "ipam", "external"}
             or project_network.get("name") != NETWORK_NAME
+            or project_network.get("ipam") != {}
             or project_network.get("external") is not True
         ):
             raise ComposeRunnerError("Rendered Compose project is not on the expected external network")
@@ -125,8 +158,10 @@ class ComposeRunner:
             volume
             for volume in volumes
             if isinstance(volume, dict)
+            and set(volume) == {"type", "source", "target", "bind"}
             and volume.get("type") == "bind"
             and volume.get("target") == CACHE_DESTINATION
+            and volume.get("bind") == {}
         ]
         if len(cache_mounts) != 1:
             raise ComposeRunnerError("Rendered Compose model-cache bind mount does not match")
