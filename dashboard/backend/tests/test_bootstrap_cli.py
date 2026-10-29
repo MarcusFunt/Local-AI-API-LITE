@@ -48,7 +48,11 @@ def test_recovery_cli_revokes_sessions_and_preserves_vault_data(monkeypatch, tmp
     setup_token = service.issue_bootstrap()
     service.setup(setup_token, "a-long-password-for-dashboard")
     login = service.login("a-long-password-for-dashboard", "127.0.0.1")
-    store.migrate(3, secrets_store.VAULT_SCHEMA)
+    control_state = load_dashboard_module("control_state")
+    jobs = load_dashboard_module("jobs")
+    store.migrate(3, control_state.CONTROL_SCHEMA)
+    store.migrate(4, jobs.JOB_SCHEMA)
+    store.migrate(5, secrets_store.VAULT_SCHEMA)
     with store.transaction() as connection:
         connection.execute(
             "INSERT INTO vault_metadata (secret_id, name, integration, purpose, created_at) "

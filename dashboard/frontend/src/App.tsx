@@ -6,13 +6,14 @@ import { createAuthClient } from "./auth";
 import type { AuthClient, AuthState, AuthenticatedState } from "./auth";
 import { AuthPage } from "./pages/AuthPage";
 import { BenchmarksPage } from "./pages/BenchmarksPage";
+import { DatabasesPage } from "./pages/DatabasesPage";
 import { LogsPage } from "./pages/LogsPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { startDashboardPolling } from "./polling";
 
-type PageName = "Overview" | "Models" | "Benchmarks" | "Logs" | "Settings";
+type PageName = "Overview" | "Models" | "Benchmarks" | "Logs" | "Databases" | "Settings";
 
 const SAMPLE_LIMIT = 120;
 const VISIBLE_POLL_MS = 5000;
@@ -104,7 +105,7 @@ function Sidebar({ page, onNavigate, onLogout }: {
   onNavigate: (page: PageName) => void;
   onLogout: () => void;
 }) {
-  const pages: PageName[] = ["Overview", "Models", "Benchmarks", "Logs", "Settings"];
+  const pages: PageName[] = ["Overview", "Models", "Benchmarks", "Logs", "Databases", "Settings"];
   return (
     <aside className="sidebar">
       <div className="brand-lockup">
@@ -130,7 +131,7 @@ function Sidebar({ page, onNavigate, onLogout }: {
 }
 
 function Topbar({ page, status }: { page: PageName; status: DashboardStatus | null }) {
-  const heading = page === "Overview" ? "System overview" : page === "Models" ? "Model configuration" : page === "Benchmarks" ? "Benchmarks & jobs" : page === "Logs" ? "Service logs" : "Security settings";
+  const heading = page === "Overview" ? "System overview" : page === "Models" ? "Model configuration" : page === "Benchmarks" ? "Benchmarks & jobs" : page === "Logs" ? "Service logs" : page === "Databases" ? "Database monitoring" : "Security settings";
   const freshness = status?.status_cache;
   const freshnessLabel = freshness?.stale
     ? freshness.refreshing ? "STALE · REFRESHING" : "STALE SNAPSHOT"
@@ -175,6 +176,7 @@ function AuthenticatedDashboard({
         {page === "Models" && <ModelsPage status={status} profiles={profiles} csrfToken={authState.csrfToken} />}
         {page === "Benchmarks" && <BenchmarksPage csrfToken={authState.csrfToken} />}
         {page === "Logs" && <LogsPage />}
+        {page === "Databases" && <DatabasesPage csrfToken={authState.csrfToken} />}
         {page === "Settings" && <SettingsPage
           authClient={authClient}
           csrfToken={authState.csrfToken}

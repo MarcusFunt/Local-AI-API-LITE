@@ -41,7 +41,7 @@ class DatabaseMonitor:
         self.timeout_grace = max(0, float(timeout_grace))
         self.monotonic_clock = monotonic_clock
         if metadata_store is not None:
-            metadata_store.migrate(5, DATABASE_SCHEMA)
+            metadata_store.migrate(6, DATABASE_SCHEMA)
 
     def configuration_state(self) -> dict[str, str]:
         try:

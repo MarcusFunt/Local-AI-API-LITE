@@ -120,6 +120,23 @@ export interface LogsResponse {
   error_category: string | null;
 }
 
+export type DatabaseConfigurationState = "Unconfigured" | "Configured" | "Unavailable";
+export type DatabaseProbeState = "Unknown" | "Available" | "Unavailable";
+
+export interface DatabaseStatus {
+  database_id: string;
+  name: string;
+  state: DatabaseProbeState;
+  checked_at: string | null;
+  latency_ms: number | null;
+  failure_category: string | null;
+}
+
+export interface DatabaseListResponse {
+  configuration_state: { state: DatabaseConfigurationState };
+  databases: DatabaseStatus[];
+}
+
 export interface ModelConfiguration {
   model_id: string;
   model_revision: string | null;
@@ -206,6 +223,72 @@ export function getProfiles(): Promise<{ profiles: Profile[] }> {
 export function getLogs(tail = 100): Promise<LogsResponse> {
   const boundedTail = Math.max(1, Math.min(200, Math.trunc(tail)));
   return getJson<LogsResponse>(`/api/control/v1/logs?tail=${boundedTail}`);
+}
+
+export function getDatabases(): Promise<DatabaseListResponse> {
+  return getJson<DatabaseListResponse>("/api/control/v1/databases");
+}
+
+async function databaseMutation<T>(
+  path: string,
+  method: "POST" | "PUT" | "DELETE",
+  csrfToken: string,
+  body?: Record<string, string>,
+): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    credentials: "same-origin",
+    cache: "no-store",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export function saveDatabase(
+  name: string,
+  csrfToken: string,
+  options: { databaseId?: string; dsn?: string } = {},
+): Promise<{ database_id: string; name: string; state?: string }> {
+  const path = options.databaseId
+    ? `/api/control/v1/databases/${encodeURIComponent(options.databaseId)}`
+    : "/api/control/v1/databases";
+  const body = { name, ...(options.dsn ? { dsn: options.dsn } : {}) };
+  return databaseMutation(path, options.databaseId ? "PUT" : "POST", csrfToken, body);
+}
+
+export function checkDatabase(databaseId: string, csrfToken: string): Promise<DatabaseStatus> {
+  return databaseMutation(
+    `/api/control/v1/databases/${encodeURIComponent(databaseId)}/check`,
+    "POST",
+    csrfToken,
+  );
+}
+
+export function deleteDatabase(databaseId: string, csrfToken: string): Promise<void> {
+  return databaseMutation(
+    `/api/control/v1/databases/${encodeURIComponent(databaseId)}`,
+    "DELETE",
+    csrfToken,
+  );
+}
+
+export function revealDatabaseCredential(
+  databaseId: string,
+  csrfToken: string,
+): Promise<{ credential: string }> {
+  return databaseMutation(
+    `/api/control/v1/databases/${encodeURIComponent(databaseId)}/reveal`,
+    "POST",
+    csrfToken,
+  );
 }
 
 async function postOperation(

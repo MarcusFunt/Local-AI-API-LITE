@@ -26,7 +26,8 @@ JOB_SCHEMA = [
 DATABASE_SCHEMA = [
     (
         "CREATE TABLE dashboard_database_status ("
-        "database_id TEXT PRIMARY KEY, state TEXT NOT NULL "
+        "database_id TEXT PRIMARY KEY REFERENCES vault_metadata(secret_id) ON DELETE CASCADE, "
+        "state TEXT NOT NULL "
         "CHECK (state IN ('Available', 'Unavailable')), checked_at TEXT NOT NULL, "
         "latency_ms INTEGER NOT NULL, failure_category TEXT)"
     ),

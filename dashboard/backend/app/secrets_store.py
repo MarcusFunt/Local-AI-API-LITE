@@ -171,7 +171,7 @@ class SecretsStore:
         self.token_factory = token_factory or (lambda size: secrets.token_urlsafe(size))
         try:
             ensure_private_directory(self.key_file.parent)
-            self.store.migrate(3, VAULT_SCHEMA)
+            self.store.migrate(5, VAULT_SCHEMA)
         except (RuntimePathError, MetadataStoreError):
             raise VaultLockedError() from None
 
@@ -204,6 +204,50 @@ class SecretsStore:
         except (OSError, RuntimePathError, MetadataStoreError, InvalidTag, ValueError):
             raise VaultLockedError() from None
         return secret_id
+
+    def update(self, secret_id: str, name: str, purpose: str, value: str) -> None:
+        if not isinstance(value, str) or not value or len(value) > MAX_SECRET_LENGTH:
+            raise VaultAccessError()
+        with self.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT name, integration, purpose FROM vault_metadata WHERE secret_id = ?",
+                (secret_id,),
+            ).fetchone()
+            if row is None or row[2] != purpose:
+                raise VaultAccessError()
+            integration = row[1]
+            _validate_metadata(name, integration, purpose)
+            nonce = secrets.token_bytes(12)
+            key = self._root_key_for_write(connection)
+            ciphertext = self.cipher.encrypt(
+                key,
+                nonce,
+                value.encode("utf-8"),
+                _associated_data(secret_id, name, integration, purpose),
+            )
+            connection.execute(
+                "UPDATE vault_metadata SET name = ? WHERE secret_id = ?",
+                (name, secret_id),
+            )
+            connection.execute(
+                "UPDATE vault_values SET nonce = ?, ciphertext = ? WHERE secret_id = ?",
+                (nonce, ciphertext, secret_id),
+            )
+            connection.execute("DELETE FROM vault_reveals WHERE secret_id = ?", (secret_id,))
+
+    def rename(self, secret_id: str, name: str, purpose: str) -> None:
+        value = self.get_for_service(secret_id, purpose)
+        self.update(secret_id, name, purpose, value)
+
+    def delete(self, secret_id: str, purpose: str) -> None:
+        with self.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT purpose FROM vault_metadata WHERE secret_id = ?",
+                (secret_id,),
+            ).fetchone()
+            if row is None or row[0] != purpose:
+                raise VaultAccessError()
+            connection.execute("DELETE FROM vault_metadata WHERE secret_id = ?", (secret_id,))
 
     def metadata(self) -> list[dict[str, str]]:
         with self.store.transaction() as connection:

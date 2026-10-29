@@ -81,6 +81,7 @@ The command validates the pinned Compose project, external `ddu_inference_bus` n
 - `POST /api/control/v1/operations/start`, `/stop`, `/restart`, and `/apply-profile` require an administrator session and CSRF token. Start and profile changes accept only a versioned profile ID; the API exposes no shell, Compose argument, prompt, or arbitrary command input.
 - Job history, status, results, comparisons, and cleanup previews require an administrator session. Job start, cancellation, and confirmed cleanup also require a CSRF token.
 - `GET /api/control/v1/logs` requires an administrator session and returns a bounded, redacted tail from the fixed `vllm` Compose service.
+- `GET /api/control/v1/databases` requires an administrator session. Adding, updating, checking, revealing, or removing a database monitor requires an administrator session and CSRF token.
 
 ## Inference operations
 
@@ -104,7 +105,13 @@ The Logs page reads at most 200 recent lines from the fixed `vllm` Compose servi
 
 The status handler reads from memory immediately while a single bounded worker refreshes Docker status and host telemetry. A successful Docker query with no matching container is `Stopped`; a failed query is `Unknown/Unavailable`. The UI polls every five seconds while visible, backs off to thirty seconds while hidden, allows one in-flight status request, and keeps up to 120 samples in browser memory. It does not write metrics or model data to disk.
 
-Database monitoring is not enabled at this stage. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
+Database monitoring is optional and remains `Unconfigured` until an administrator adds a connection. GPU utilization and VRAM are device-wide and can include Windows display activity and other processes.
+
+## Optional PostgreSQL monitoring
+
+Add a monitor from the Databases page with a PostgreSQL connection URI. The URI is encrypted in the local vault with AES-GCM and a root key protected by Windows DPAPI CurrentUser; list, update, check, and delete responses never include it. An administrator can request a one-time reveal with a CSRF-protected action; that response is marked `no-store`, and the page keeps the value only in component memory until hidden or navigated away from.
+
+Each check runs in one isolated bounded worker, uses the vault's `database-monitor` purpose, applies connect and statement timeouts, forces PostgreSQL's default transaction mode to read-only, and executes only `SELECT 1`. Probe failures are reduced to short categories and cannot block inference status. Database monitoring does not provision or alter accounts, schemas, or data. An empty configuration reports `Unconfigured`; a saved monitor that cannot be reached reports `Unavailable`.
 
 ## Checks
 

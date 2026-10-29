@@ -6,6 +6,8 @@ import pytest
 from fakes import FakeKeyProtector
 
 from app.auth import AuthService
+from app.control_state import CONTROL_SCHEMA
+from app.jobs import JOB_SCHEMA
 from app.persistence import MetadataStore
 from app.secrets_store import (
     AESGCMCipher,
@@ -21,6 +23,8 @@ SECRET_VALUE = "postgresql://monitor:synthetic-password@db.example.invalid:5432/
 def _vault(tmp_path, protector=None):
     metadata = MetadataStore(tmp_path / "metadata.sqlite3")
     AuthService(metadata)
+    metadata.migrate(3, CONTROL_SCHEMA)
+    metadata.migrate(4, JOB_SCHEMA)
     key_file = tmp_path / "vault" / "root-key.dpapi"
     protector = protector or FakeKeyProtector()
     return SecretsStore(metadata, key_file, protector, AESGCMCipher()), protector

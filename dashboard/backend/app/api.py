@@ -14,16 +14,19 @@ from .auth import AuthService, require_session
 from .compose_runner import ComposeRunner
 from .configuration import LocalSettingsStore
 from .control_state import ActivityGate, OperationCoordinator
+from .databases import DatabaseMonitor
 from .docker_status import DockerReader
 from .jobs import DockerJobCommandAdapter, JobArtifactStore, JobRunner
 from .logs import DockerLogReader
 from .paths import data_directory
-from .persistence import MetadataStore
+from .persistence import JOB_SCHEMA, MetadataStore
 from .profiles import DEFAULT_PROFILES_PATH, load_profiles, public_profile
 from .routes.auth import router as auth_router
+from .routes.databases import router as databases_router
 from .routes.jobs import router as jobs_router
 from .routes.logs import router as logs_router
 from .routes.operations import router as operations_router
+from .secrets_store import AESGCMCipher, SecretsStore, WindowsDpapiProtector
 from .status_cache import StatusCache
 from .telemetry import read_host_telemetry
 
@@ -108,6 +111,8 @@ def create_app(
     contract_checker: Any | None = None,
     job_runner: Any | None = None,
     log_reader: Any | None = None,
+    secret_store: Any | None = None,
+    database_monitor: Any | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Local-AI-API-LITE Dashboard",
@@ -169,12 +174,13 @@ def create_app(
     )
     runner = operation_runner or ComposeRunnerProvider(app.state.local_settings_store)
     checker = contract_checker or ComposeContractChecker(runner)
+    activity_gate = ActivityGate(store)
     app.state.operation_coordinator = operation_coordinator or OperationCoordinator(
         settings=app.state.local_settings_store,
         runner=runner,
         status_reader=app.state.status_cache,
         contract_checker=checker,
-        gate=ActivityGate(store),
+        gate=activity_gate,
     )
     if job_runner is None:
         job_command_adapter = DockerJobCommandAdapter(
@@ -183,19 +189,33 @@ def create_app(
             profiles_path=app.state.profiles_path,
             runtime_inspector=runner,
         )
-        activity_gate = getattr(app.state.operation_coordinator, "gate", None)
-        if activity_gate is None:
-            activity_gate = ActivityGate(store)
+        job_activity_gate = getattr(app.state.operation_coordinator, "gate", None) or activity_gate
         app.state.job_runner = JobRunner(
-            activity_gate,
+            job_activity_gate,
             job_command_adapter,
             JobArtifactStore(),
         )
     else:
         app.state.job_runner = job_runner
+    if store.schema_version() < 4:
+        store.migrate(4, JOB_SCHEMA)
+    app.state.secret_store = secret_store or SecretsStore(
+        store,
+        store.path.parent / "vault" / "root-key.dpapi",
+        WindowsDpapiProtector(),
+        AESGCMCipher(),
+    )
+    if database_monitor is None:
+        app.state.database_monitor = DatabaseMonitor(
+            app.state.secret_store,
+            metadata_store=store,
+        )
+    else:
+        app.state.database_monitor = database_monitor
     app.include_router(operations_router)
     app.include_router(jobs_router)
     app.include_router(logs_router)
+    app.include_router(databases_router)
     if operation_coordinator is None:
         try:
             app.state.operation_coordinator.reconcile_after_restart()

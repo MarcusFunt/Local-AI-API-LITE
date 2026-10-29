@@ -10,6 +10,7 @@ from app.auth import AUTH_SCHEMA
 from app.control_state import CONTROL_SCHEMA
 from app.jobs import JOB_SCHEMA
 from app.persistence import MetadataStore
+from app.secrets_store import VAULT_SCHEMA
 
 DATABASE_ID = "a" * 32
 
@@ -19,6 +20,7 @@ def _metadata_store(path):
     store.migrate(2, AUTH_SCHEMA)
     store.migrate(3, CONTROL_SCHEMA)
     store.migrate(4, JOB_SCHEMA)
+    store.migrate(5, VAULT_SCHEMA)
     return store
 
 
