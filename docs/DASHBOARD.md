@@ -60,7 +60,17 @@ Dashboard sessions last eight hours and use a server-managed HttpOnly cookie. Th
 
 On Windows, runtime metadata lives under `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\metadata.sqlite3`. The containing directory is restricted to the current Windows user. Encrypted vault values are stored separately from descriptive metadata. The random vault root key is protected with Windows DPAPI CurrentUser and belongs at `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\vault\root-key.dpapi`; it is never stored in plaintext. If the current user's Windows profile or DPAPI key is unavailable, the vault is locked and does not fall back to plaintext. The installer does not create or delete vault data.
 
-The Scheduled Task runs only in the Docker Desktop user's interactive session, with limited privileges. The controller binds to loopback and performs fixed Docker status queries. It does not mount a Docker socket or accept arbitrary commands. The model endpoint remains private on `ddu_inference_bus` with no published host port. Inference controls stay unavailable until a later phase validates an operator-configured stable Compose root.
+The Scheduled Task runs only in the Docker Desktop user's interactive session, with limited privileges. The controller binds to loopback and performs fixed Docker status queries. It does not mount a Docker socket or accept arbitrary commands. The model endpoint remains private on `ddu_inference_bus` with no published host port. Inference controls remain unavailable until the control API and UI are implemented; configuring a project root alone does not start or change inference.
+
+## Explicit Compose project configuration
+
+The controller never guesses which checkout owns the inference service. After selecting a stable checkout, configure its root locally from `dashboard/backend`:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.settings configure-compose-root --path "D:\path\to\Local-AI-API-LITE"
+```
+
+The command validates the pinned Compose project, external `ddu_inference_bus` network, `ddu-llm` alias, model-cache bind mount, and absence of published host ports. It then stores the chosen path in the current user's protected dashboard settings. Docker Compose configuration validation is read-only; this command does not start, stop, recreate, or reconfigure containers. Until an operator explicitly runs it, status controls have no configured project source and remain unavailable. Never configure a worktree that may be deleted or replaced as the long-term project root.
 
 ## Authenticated read-only API
 
