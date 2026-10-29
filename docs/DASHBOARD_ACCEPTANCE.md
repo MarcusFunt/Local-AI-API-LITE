@@ -4,13 +4,17 @@
 **Branch:** `codex/fix-dashboard-runtime-state`
 **Pull requests:** [PR #3](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/3), [PR #4](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/4), and [PR #5](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/5) are merged. [PR #6](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/6) is the open follow-up for runtime-state reconciliation and Task 15 acceptance updates.
 
-## Current status — 2026-10-29 20:18 Copenhagen
+## Current status — 2026-10-29
+
+The apparent database mismatch was traced to Windows package file redirection. A Codex-launched process requested the expected metadata path, but Windows resolved its open file handle to a separate file under `Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Local-AI-API-LITE\Dashboard`. SQLite's reported database path alone did not reveal the redirection. A temporary read-only diagnostic launched by Task Scheduler in the non-packaged user context resolved the handle to the expected `%LOCALAPPDATA%` path and found one administrator, 12 sessions, and three operations; the latest operation completed at approximately 19:43:12Z, consistent with the live dashboard. The running controller's in-memory store path was not directly inspected. No database or credentials were changed, and the temporary diagnostic and task were removed.
+
+The observations in the historical updates below reflect what was known at the time; their unresolved-mismatch conclusions are superseded by this finding. Controller-restart persistence and the other pending acceptance checks still require their own tests.
 
 - The operator manually signed in. The authenticated Models page and a fresh read of `/api/control/v1/operations/state` reported `configured: true`.
-- At 20:18 Copenhagen, a browser reload of the authenticated operation-state endpoint still returned the successful Start record and `desired_state: running`. The expected SQLite file still shows the older state, so the source of that response remains unconfirmed.
+- At 20:18 Copenhagen, a browser reload of the authenticated operation-state endpoint returned the successful Start record and `desired_state: running`. The later non-packaged read-only database check found records consistent with the live observations.
 - The dashboard Stop operation succeeded at 18:54:54Z (19:54:54 Copenhagen); Docker showed the single project container exited. The dashboard Start operation succeeded at 19:00:57Z (20:00:57 Copenhagen); Docker later reported the pinned container healthy and the page showed Ready.
 - The current runtime is `Ready` on Baseline 8K / 4 sequences, model `RedHatAI/Qwen3.5-4B-quantized.w4a16`, pinned revision `7a613872f394578b0b52b683ff4ac47516b4bcaf`, alias `ddu-narrator`, parser `qwen3`, and pinned vLLM image `v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34`. Docker inspection showed `ddu_inference_bus` with alias `ddu-llm` and no host-published ports.
-- **Persistence mismatch remains unresolved.** The live endpoint returns successful Stop/Start journal records and the current desired state. A direct read-only query of `C:\Users\marcu\AppData\Local\Local-AI-API-LITE\Dashboard\metadata.sqlite3` still shows the pre-operation `running` row, no operation rows, and no administrator or session rows. The serving process is owned by `marcu`, its current directory is `D:\projects\Local-AI-API-LITE\dashboard\backend`, and its `LOCALAPPDATA` is `C:\Users\marcu\AppData\Local`, matching the expected path. The controller code resolves metadata through that per-user path, so the reason the endpoint and file readback disagree is still unknown. Database/auth persistence and desired-state-across-controller-restart acceptance must remain unverified.
+- **Database readback reconciled.** The earlier empty read was from the Codex package-redirected copy, not the database opened by the non-packaged diagnostic. The real database contains administrator, session, and operation records; persistence across a controller restart remains unverified.
 
 ## Automated checks
 
@@ -31,7 +35,7 @@ Automated checks use mocked Docker and PostgreSQL adapters. Live inference accep
 | GitHub Actions | Passed | `contract-and-config` passed for both push and pull-request events on head `f979e24`. |
 | Diff whitespace | Passed | `git diff --check` passed on the Task 15 fix working tree. |
 | Windows DPAPI CurrentUser round trip | Passed in focused automated check | Recorded during Task 3 on this Windows host. Cross-user behavior remains pending below. |
-| Local browser/controller session | Partial | The operator manually signed in; the operation-state endpoint returned `configured: true`, and protected Models controls displayed live status. The controller binds to `127.0.0.1:8765`; no-cookie protected status returns 401. The expected per-user database still has zero administrator and active-session rows while the live endpoint serves authenticated state, so auth/database persistence remains unreconciled. |
+| Local browser/controller session | Partial | The operator manually signed in; the operation-state endpoint returned `configured: true`, and protected Models controls displayed live status. The controller binds to `127.0.0.1:8765`; no-cookie protected status returns 401. A later non-packaged read-only check found administrator and session records in the expected database. Controller-restart persistence remains unverified. |
 
 ## Pending Windows-host acceptance
 
@@ -46,9 +50,9 @@ These checks require a separate operator window. Keep them pending until an oper
 | Inference network and model identity | Verified after Start | Docker reports the single project container healthy on `ddu_inference_bus` with alias `ddu-llm`, no host-published ports, the pinned vLLM image/model revision, `ddu-narrator` alias, 8,192 context, and four sequences. |
 | DPAPI access from another Windows user | Pending | The configured user can read its vault; a different user sees a locked vault and cannot decrypt values. |
 | NVML and controller resource cost | Partial | A 15-second idle sample of the current controller on 2026-10-29 observed 0.000 CPU seconds at the process timer's reported resolution and a working set change from 30.11 to 29.90 MiB across 20 logical processors. Authenticated polling cost, startup cost, extended stability, and a current NVML sample remain unmeasured. |
-| Stop, Start, slow load, failed profile, and rollback | Partial | Dashboard Stop and Start each returned success; the container exited cleanly and returned healthy. Desired state across controller restart remains unverified because of the database readback discrepancy. A deliberate failed candidate/rollback and a separate slow-load scenario remain pending. |
+| Stop, Start, slow load, failed profile, and rollback | Partial | Dashboard Stop and Start each returned success; the container exited cleanly and returned healthy. Desired state across controller restart remains unverified; the earlier database readback discrepancy was traced to package file redirection. A deliberate failed candidate/rollback and a separate slow-load scenario remain pending. |
 | Optional PostgreSQL probe against an approved test database | Pending | `SELECT 1` succeeds read-only; a failed connection reports a short category and does not change inference status. |
-| First administrator setup and credential reveal/browser storage | Partial | The operator previously set a password and has signed in successfully. The endpoint serves authenticated state, but the expected metadata database has zero administrator/session rows, so persistence remains unconfirmed. Credential reveal/browser-storage checks remain pending. Legacy setup-token text files in `install-output` are ignored by the tokenless controller. |
+| First administrator setup and credential reveal/browser storage | Partial | The operator previously set a password and has signed in successfully. The endpoint serves authenticated state, and a non-packaged read-only check found administrator and session records in the expected database. Persistence across controller restart remains unverified. Credential reveal/browser-storage checks remain pending. Legacy setup-token text files in `install-output` are ignored by the tokenless controller. |
 
 ## Development and live-test actions
 

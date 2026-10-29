@@ -61,6 +61,8 @@ Dashboard sessions last eight hours and use a server-managed HttpOnly cookie. Th
 
 On Windows, runtime metadata lives under `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\metadata.sqlite3`. The containing directory is restricted to the current Windows user. Encrypted vault values are stored separately from descriptive metadata. The random vault root key is protected with Windows DPAPI CurrentUser and belongs at `%LOCALAPPDATA%\Local-AI-API-LITE\Dashboard\vault\root-key.dpapi`; it is never stored in plaintext. If the current user's Windows profile or DPAPI key is unavailable, the vault is locked and does not fall back to plaintext. The installer does not create or delete vault data.
 
+When inspecting metadata on Windows, packaged applications may redirect `%LOCALAPPDATA%` file access to their own package `LocalCache`, even when the requested path and SQLite's reported path look correct. Verify the final path of an opened file handle and, if necessary, run read-only checks in the same non-packaged user context as the controller. Never copy or replace the database to resolve a readback discrepancy.
+
 The Scheduled Task runs only in the Docker Desktop user's interactive session, with limited privileges. The controller binds to loopback and performs fixed Docker queries. It does not mount a Docker socket or accept arbitrary commands. The model endpoint remains private on `ddu_inference_bus` with no published host port. Inference controls stay unavailable until an operator configures a stable Compose project root in local settings; that configuration alone does not start or change inference.
 
 ## Explicit Compose project configuration
