@@ -50,6 +50,7 @@ def test_model_installer_is_explicit_write_access_and_not_on_inference_network()
     installer = compose["services"]["model-installer"]
 
     assert installer["profiles"] == ["install"]
+    assert installer["user"] == "${MODEL_CACHE_UID:-10001}:${MODEL_CACHE_GID:-10001}"
     assert "networks" not in installer
     assert installer["command"][-1] == "--plan"
     model_mount = next(mount for mount in installer["volumes"] if mount["target"] == "/models")
@@ -86,6 +87,8 @@ def test_retrieval_env_example_uses_an_external_cache_without_credentials():
     assert "MODEL_CACHE_DIR=" in example
     assert "HF_TOKEN" not in example
     assert "MODEL_ID=" not in example
+    assert "MODEL_CACHE_UID=" in example
+    assert "MODEL_CACHE_GID=" in example
 
 
 def test_worker_runtime_is_exactly_pinned_and_every_dependency_has_a_hash():

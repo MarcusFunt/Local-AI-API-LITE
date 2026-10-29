@@ -133,7 +133,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
-    user: "10001:10001"
+    user: "${MODEL_CACHE_UID:-10001}:${MODEL_CACHE_GID:-10001}"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
