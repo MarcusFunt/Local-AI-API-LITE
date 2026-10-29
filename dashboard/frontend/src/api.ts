@@ -83,6 +83,13 @@ export interface DashboardStatus {
   };
   active_profile: Profile | null;
   telemetry: Telemetry;
+  status_cache: {
+    observed_at: string | null;
+    stale: boolean;
+    refreshing: boolean;
+    last_poll_error: string | null;
+    last_poll_error_at: string | null;
+  };
 }
 
 export interface TelemetrySample {
@@ -96,7 +103,7 @@ async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
     headers: { Accept: "application/json" },
     cache: "no-store",
-    signal: AbortSignal.timeout(4500),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
     throw new Error(`Dashboard API returned ${response.status}`);

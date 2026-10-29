@@ -64,6 +64,7 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .topbar h1 { margin: 10px 0 0; color: #f0f3ef; font: 600 21px var(--display); letter-spacing: -.025em; }
 .topbar-status { min-width: 188px; padding-left: 19px; border-left: 1px solid #2e3933; }
 .refresh-label { color: #66756c; }
+.refresh-state { margin-top: 4px; color: #829087; font: 9px var(--mono); letter-spacing: .04em; }
 .refresh-value { margin-top: 8px; color: #d0d8d2; font: 10px var(--mono); }
 .page-state-line { display: flex; align-items: center; gap: 12px; padding: 14px 0 4px; }
 .page-state-line > .eyebrow { color: #627068; }

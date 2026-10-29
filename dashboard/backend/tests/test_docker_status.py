@@ -120,7 +120,7 @@ def test_running_container_without_a_healthy_probe_is_degraded():
     assert result.get("last_successful_health_probe_at") == "2026-10-28T19:39:48Z"
 
 
-def test_successful_docker_query_with_no_container_reports_stopped():
+def test_successful_empty_container_listing_is_stopped():
     docker_status = load_dashboard_module("docker_status")
     result = docker_status.DockerReader(
         docker_path="docker",
@@ -130,6 +130,33 @@ def test_successful_docker_query_with_no_container_reports_stopped():
     assert result["availability"] == "available"
     assert result["inference_state"] == "Stopped"
     assert result["container"] is None
+
+
+def test_unhealthy_exited_and_malformed_inspect_states_are_truthful():
+    docker_status = load_dashboard_module("docker_status")
+
+    def read_inspect(record):
+        def run(args, **_kwargs):
+            if args[1] == "ps":
+                return _completed("abcdef123456\n")
+            if args[1] == "inspect":
+                return _completed(json.dumps([record]))
+            if args[1] == "stats":
+                return _completed("")
+            raise AssertionError(f"unexpected Docker command: {args[1]}")
+
+        return docker_status.DockerReader(docker_path="docker", run=run).read()
+
+    unhealthy = _inspect_record(health="unhealthy")
+    assert read_inspect(unhealthy)["inference_state"] == "Degraded"
+
+    exited = _inspect_record(state="exited")
+    exited["State"]["ExitCode"] = 0
+    assert read_inspect(exited)["inference_state"] == "Stopped"
+
+    malformed = read_inspect({"State": "invalid"})
+    assert malformed["inference_state"] == "Unknown"
+    assert malformed["availability"] == "available"
 
 
 def test_invalid_profile_registry_does_not_hide_a_healthy_container(monkeypatch, tmp_path):

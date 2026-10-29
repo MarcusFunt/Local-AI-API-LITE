@@ -199,8 +199,17 @@ function Topbar({ page, status }: { page: PageName; status: DashboardStatus | nu
         <h1>{page === "Overview" ? "System overview" : "Model configuration"}</h1>
       </div>
       <div className="topbar-status">
-        <div className="refresh-label eyebrow">LAST REFRESH</div>
-        <div className="refresh-value">{formatDate(status?.refreshed_at)}</div>
+        <div className="refresh-label eyebrow">LAST STATUS OBSERVATION</div>
+        <div className="refresh-value">{formatDate(status?.status_cache.observed_at)}</div>
+        <div className="refresh-state" role="status">
+          {status?.status_cache.stale
+            ? status.status_cache.refreshing
+              ? "STALE · REFRESHING"
+              : "STALE SNAPSHOT"
+            : status?.status_cache.refreshing
+              ? "REFRESHING SNAPSHOT"
+              : "CURRENT SNAPSHOT"}
+        </div>
       </div>
     </header>
   );

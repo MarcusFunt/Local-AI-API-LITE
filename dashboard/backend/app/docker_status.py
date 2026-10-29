@@ -4,6 +4,7 @@ import json
 import math
 import re
 import subprocess
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -41,24 +42,35 @@ class DockerReader:
         docker_path: str | None = None,
         run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         timeout_seconds: float = 3,
+        command_budget: float = 8,
+        monotonic_clock: Callable[[], float] = time.monotonic,
         project_name: str = PROJECT_NAME,
         service_name: str = SERVICE_NAME,
     ) -> None:
         self.docker_path = docker_path
         self._run = run
         self.timeout_seconds = timeout_seconds
+        self.command_budget = command_budget
+        self._monotonic = monotonic_clock
         self.project_name = project_name
         self.service_name = service_name
 
-    def _command(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def _command(
+        self,
+        *arguments: str,
+        deadline: float,
+    ) -> subprocess.CompletedProcess[str]:
         if not self.docker_path:
             raise FileNotFoundError("Docker CLI is unavailable")
+        remaining = deadline - self._monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired([self.docker_path, *arguments], timeout=0)
         return self._run(
             [self.docker_path, *arguments],
             capture_output=True,
             text=True,
             check=False,
-            timeout=self.timeout_seconds,
+            timeout=min(self.timeout_seconds, remaining),
         )
 
     @staticmethod
@@ -67,7 +79,8 @@ class DockerReader:
             raise RuntimeError("Docker query failed")
         return result.stdout or ""
 
-    def read(self) -> dict[str, Any]:
+    def read(self, deadline: float | None = None) -> dict[str, Any]:
+        deadline = deadline if deadline is not None else self._monotonic() + self.command_budget
         try:
             listing = self._checked(
                 self._command(
@@ -78,6 +91,7 @@ class DockerReader:
                     f"label=com.docker.compose.project={self.project_name}",
                     "--filter",
                     f"label=com.docker.compose.service={self.service_name}",
+                    deadline=deadline,
                 )
             )
             container_ids = [line.strip() for line in listing.splitlines() if line.strip()]
@@ -89,11 +103,17 @@ class DockerReader:
                     "last_failure_reason": "Multiple inference containers match the LITE Compose service",
                 }
 
-            inspect_text = self._checked(self._command("inspect", container_ids[0]))
+            inspect_text = self._checked(self._command("inspect", container_ids[0], deadline=deadline))
             records = json.loads(inspect_text)
             if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
                 raise ValueError("Unexpected Docker inspect response")
-            return self._from_inspect(records[0])
+            return self._from_inspect(records[0], deadline)
+        except subprocess.TimeoutExpired:
+            return {
+                **self._empty_result("Unknown", "unavailable"),
+                "last_failure_reason": "Docker status query exceeded its time budget",
+                "poll_error_category": "command_timeout",
+            }
         except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
             return {
                 **self._empty_result("Unknown", "unavailable"),
@@ -114,7 +134,7 @@ class DockerReader:
             "cache_path": None,
         }
 
-    def _from_inspect(self, record: dict[str, Any]) -> dict[str, Any]:
+    def _from_inspect(self, record: dict[str, Any], deadline: float) -> dict[str, Any]:
         state_data = record.get("State") if isinstance(record.get("State"), dict) else {}
         state = str(state_data.get("Status", "unknown")).lower()
         health_data = state_data.get("Health") if isinstance(state_data.get("Health"), dict) else {}
@@ -171,7 +191,7 @@ class DockerReader:
 
         container_id = record.get("Id") if isinstance(record.get("Id"), str) else ""
         container_name = str(record.get("Name", "")).lstrip("/")
-        stats = self._read_stats(container_id) if state == "running" and container_id else {}
+        stats = self._read_stats(container_id, deadline) if state == "running" and container_id else {}
         cache_path = _cache_mount_source(record.get("Mounts"))
 
         return {
@@ -196,9 +216,16 @@ class DockerReader:
             "cache_path": cache_path,
         }
 
-    def _read_stats(self, container_id: str) -> dict[str, Any]:
+    def _read_stats(self, container_id: str, deadline: float) -> dict[str, Any]:
         try:
-            result = self._command("stats", "--no-stream", "--format", "{{json .}}", container_id)
+            result = self._command(
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{json .}}",
+                container_id,
+                deadline=deadline,
+            )
             output = self._checked(result).strip()
             row = json.loads(output) if output else {}
             if not isinstance(row, dict):

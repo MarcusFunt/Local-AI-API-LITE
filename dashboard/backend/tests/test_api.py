@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from conftest import AsgiTestClient, load_dashboard_module
 
 
 class HealthyDocker:
-    def read(self):
+    def read(self, deadline=None):
         return {
             "availability": "available",
             "inference_state": "Ready",
@@ -24,6 +27,37 @@ class HealthyDocker:
             "last_health_probe_at": "2026-10-28T19:40:18Z",
             "last_failure_reason": None,
             "cache_path": "C:/Users/operator/private-cache",
+        }
+
+
+class FixedStatusCache:
+    def get_snapshot(self):
+        return {
+            "availability": "available",
+            "inference_state": "Ready",
+            "container": {"state": "running", "health": "healthy", "cpu_percent": 1.0},
+            "configuration": {
+                "model_id": "RedHatAI/Qwen3.5-4B-quantized.w4a16",
+                "model_revision": "7a613872f394578b0b52b683ff4ac47516b4bcaf",
+                "model_alias": "ddu-narrator",
+                "reasoning_parser": "qwen3",
+                "max_model_len": 8192,
+                "max_num_seqs": 4,
+                "gpu_memory_utilization": 0.75,
+                "engine": "vLLM 0.32.0",
+                "quantization": "W4A16",
+            },
+            "active_profile": "baseline-8k-4",
+            "last_health_probe_at": "2026-10-28T19:40:18Z",
+            "last_successful_health_probe_at": "2026-10-28T19:40:18Z",
+            "last_failure_reason": None,
+            "cache_path": "C:/Users/operator/private-cache",
+            "telemetry": _host_metrics(),
+            "observed_at": "2026-10-28T19:40:18Z",
+            "stale": True,
+            "refreshing": True,
+            "last_poll_error": "reader_error",
+            "last_poll_error_at": "2026-10-28T19:40:19Z",
         }
 
 
@@ -49,7 +83,7 @@ def test_controller_health_is_available_when_inference_is_not(tmp_path):
     api = load_dashboard_module("api")
 
     class BrokenDocker:
-        def read(self):
+        def read(self, deadline=None):
             raise RuntimeError("Docker unavailable")
 
     client = AsgiTestClient(
@@ -66,6 +100,37 @@ def test_controller_health_is_available_when_inference_is_not(tmp_path):
     assert response.json()["status"] == "healthy"
 
 
+def test_status_endpoint_returns_before_slow_docker_refresh_completes(tmp_path):
+    api = load_dashboard_module("api")
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowDocker:
+        def read(self, deadline=None):
+            started.set()
+            release.wait(timeout=1)
+            return {"availability": "available", "inference_state": "Stopped"}
+
+    client = AsgiTestClient(
+        api.create_app(
+            docker_reader=SlowDocker(),
+            telemetry_reader=_host_metrics,
+            metadata_path=tmp_path / "metadata.sqlite3",
+        )
+    )
+    client.setup_admin()
+
+    started_at = time.monotonic()
+    try:
+        response = client.get("/api/control/v1/status")
+        assert response.status_code == 200
+        assert time.monotonic() - started_at < 0.1
+        assert response.json()["inference"]["state"] == "Unknown"
+        assert started.wait(timeout=1)
+    finally:
+        release.set()
+
+
 def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboard_root, tmp_path):
     api = load_dashboard_module("api")
     client = AsgiTestClient(
@@ -74,6 +139,7 @@ def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboar
             telemetry_reader=_host_metrics,
             profiles_path=dashboard_root / "dashboard" / "config" / "profiles.yaml",
             metadata_path=tmp_path / "metadata.sqlite3",
+            status_cache=FixedStatusCache(),
         )
     )
     client.setup_admin()
@@ -85,6 +151,13 @@ def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboar
     assert response.json()["active_profile"]["id"] == "baseline-8k-4"
     assert response.json()["inference"]["configuration"]["reasoning_parser"] == "qwen3"
     assert response.json()["telemetry"]["gpu"]["utilization_percent"] is None
+    assert response.json()["status_cache"] == {
+        "observed_at": "2026-10-28T19:40:18Z",
+        "stale": True,
+        "refreshing": True,
+        "last_poll_error": "reader_error",
+        "last_poll_error_at": "2026-10-28T19:40:19Z",
+    }
     assert "C:/Users/operator/private-cache" not in response.text
     assert "cache_path" not in response.json()
     assert client.post("/api/control/v1/inference/stop").status_code in {404, 405}
