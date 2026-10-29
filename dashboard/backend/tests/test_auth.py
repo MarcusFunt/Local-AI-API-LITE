@@ -7,7 +7,7 @@ import pytest
 from app.auth import Argon2PasswordHasher, AuthenticationError, AuthService
 from app.persistence import MetadataStore
 
-PASSWORD = "correct horse battery staple"
+PASSWORD = "Pass1234"
 
 
 class MutableClock:
@@ -91,7 +91,7 @@ def test_invalid_recovery_token_does_not_hash_candidate_password(tmp_path):
     hasher.hash_calls = 0
 
     with pytest.raises(AuthenticationError):
-        service.recover_with_local_token("invalid-token", "a recovered strong password")
+        service.recover_with_local_token("invalid-token", "RecoveredStrongPassword7")
 
     assert hasher.hash_calls == 0
 
@@ -118,6 +118,28 @@ def test_setup_requires_new_password_and_creates_argon2id_verifier(tmp_path):
     assert verifier.startswith("$argon2id$")
     assert PASSWORD not in verifier
     assert token not in saved_values
+
+
+def test_setup_accepts_eight_character_password_without_symbol(tmp_path):
+    service = _service(tmp_path / "metadata.sqlite3")
+    token = service.issue_bootstrap()
+
+    service.setup(token, "Abcd1234")
+
+    assert service.login("Abcd1234", "127.0.0.1")
+
+
+@pytest.mark.parametrize(
+    "password",
+    ["lowercasepassword1", "UPPERCASEPASSWORD1", "PasswordWithoutDigits"],
+    ids=["uppercase-required", "lowercase-required", "number-required"],
+)
+def test_setup_rejects_password_missing_a_required_character_class(password, tmp_path):
+    service = _service(tmp_path / "metadata.sqlite3")
+    token = service.issue_bootstrap()
+
+    with pytest.raises(AuthenticationError):
+        service.setup(token, password)
 
 
 def test_login_rotates_session_tokens(tmp_path):
@@ -179,11 +201,11 @@ def test_password_change_revokes_old_sessions(tmp_path):
     first = service.login(PASSWORD, "127.0.0.1")
     second = service.login(PASSWORD, "127.0.0.1")
 
-    service.change_password(first.session, PASSWORD, "a different strong password")
+    service.change_password(first.session, PASSWORD, "DifferentStrongPassword7")
 
     assert service.load_session(first.session_token) is None
     assert service.load_session(second.session_token) is None
-    assert service.login("a different strong password", "127.0.0.1")
+    assert service.login("DifferentStrongPassword7", "127.0.0.1")
 
 
 def test_login_rate_limit_survives_app_restart(tmp_path):
@@ -218,7 +240,7 @@ def test_recovery_token_is_one_use_and_revokes_sessions(tmp_path):
     recovery_token = service.issue_recovery()
 
     assert service.load_session(login.session_token) is None
-    service.recover_with_local_token(recovery_token, "a recovered strong password")
-    assert service.login("a recovered strong password", "127.0.0.1")
+    service.recover_with_local_token(recovery_token, "RecoveredStrongPassword7")
+    assert service.login("RecoveredStrongPassword7", "127.0.0.1")
     with pytest.raises(AuthenticationError):
-        service.recover_with_local_token(recovery_token, "another strong password")
+        service.recover_with_local_token(recovery_token, "AnotherStrongPassword8")

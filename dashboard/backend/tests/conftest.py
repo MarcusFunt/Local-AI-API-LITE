@@ -66,7 +66,7 @@ class AsgiTestClient:
     def post(self, path: str, *, json_body=None, headers: dict[str, str] | None = None) -> httpx.Response:
         return self.request("POST", path, json_body=json_body, headers=headers)
 
-    def setup_admin(self, password: str = "correct horse battery staple") -> httpx.Response:
+    def setup_admin(self, password: str = "CorrectHorseBatteryStaple7") -> httpx.Response:
         token = self.app.state.auth_service.issue_bootstrap()
         setup = self.post("/auth/setup", json_body={"token": token, "password": password})
         assert setup.status_code == 204

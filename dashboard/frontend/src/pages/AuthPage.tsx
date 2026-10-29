@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { ADMIN_PASSWORD_HINT, ADMIN_PASSWORD_PATTERN } from "../auth";
 
 type AuthMode = "setup-required" | "logged-out";
 
@@ -89,19 +90,26 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
             <input
               autoComplete={showPasswordForm ? "new-password" : "current-password"}
               required
-              minLength={12}
+              minLength={8}
+              maxLength={256}
+              pattern={showPasswordForm ? ADMIN_PASSWORD_PATTERN : undefined}
+              title={showPasswordForm ? ADMIN_PASSWORD_HINT : undefined}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
             />
           </label>
+          {showPasswordForm && <p className="auth-copy password-requirements">{ADMIN_PASSWORD_HINT}</p>}
           {showPasswordForm && (
             <label>
               Confirm new password
               <input
                 autoComplete="new-password"
                 required
-                minLength={12}
+                minLength={8}
+                maxLength={256}
+                pattern={ADMIN_PASSWORD_PATTERN}
+                title={ADMIN_PASSWORD_HINT}
                 value={confirmation}
                 onChange={(event) => setConfirmation(event.target.value)}
                 type="password"

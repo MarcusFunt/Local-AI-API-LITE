@@ -24,6 +24,22 @@ function makeClient(): AuthClient {
 }
 
 describe("settings security controls", () => {
+  it("accepts an eight-character password without a symbol", async () => {
+    render(
+      <SettingsPage
+        authClient={makeClient()}
+        csrfToken="csrf-in-memory"
+        onPasswordChanged={vi.fn()}
+      />,
+    );
+    const password = screen.getByLabelText("New password") as HTMLInputElement;
+
+    fireEvent.change(password, { target: { value: "Abcd1234" } });
+
+    expect(password.checkValidity()).toBe(true);
+    expect(screen.getByText(/Symbols are optional/)).toBeTruthy();
+  });
+
   it("lists safe session metadata and revokes sessions other than the current one", async () => {
     const client = makeClient();
     render(
@@ -59,10 +75,10 @@ describe("settings security controls", () => {
       target: { value: "old-password" },
     });
     fireEvent.change(screen.getByLabelText("New password"), {
-      target: { value: "new-password-long" },
+      target: { value: "NewPassword123" },
     });
     fireEvent.change(screen.getByLabelText("Confirm new password"), {
-      target: { value: "new-password-long" },
+      target: { value: "NewPassword123" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
 
@@ -70,7 +86,7 @@ describe("settings security controls", () => {
       expect(client.changePassword).toHaveBeenCalledWith(
         "csrf-in-memory",
         "old-password",
-        "new-password-long",
+        "NewPassword123",
       ),
     );
     expect(onPasswordChanged).toHaveBeenCalledOnce();

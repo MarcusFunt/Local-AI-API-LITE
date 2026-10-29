@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from conftest import AsgiTestClient, load_dashboard_module
 
-PASSWORD = "correct horse battery staple"
+PASSWORD = "Pass1234"
 LOCAL_ORIGIN = "http://127.0.0.1:8765"
 
 

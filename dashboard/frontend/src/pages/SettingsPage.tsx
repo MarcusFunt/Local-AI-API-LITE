@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
-import type { AuthClient, SessionMetadata } from "../auth";
+import { ADMIN_PASSWORD_HINT, ADMIN_PASSWORD_PATTERN, type AuthClient, type SessionMetadata } from "../auth";
 
 interface SettingsPageProps {
   authClient: AuthClient;
@@ -104,9 +104,10 @@ export function SettingsPage({ authClient, csrfToken, onPasswordChanged }: Setti
       <section className="panel settings-panel">
         <div className="panel-heading"><div><span className="eyebrow">ADMINISTRATOR CREDENTIAL</span><h2>Change password</h2></div></div>
         <form className="settings-form" onSubmit={(event) => void changePassword(event)}>
-          <label>Current password<input autoComplete="current-password" minLength={12} required type="password" value={oldPassword} onChange={(event) => setOldPassword(event.target.value)} /></label>
-          <label>New password<input autoComplete="new-password" minLength={12} required type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
-          <label>Confirm new password<input autoComplete="new-password" minLength={12} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+          <label>Current password<input autoComplete="current-password" minLength={8} maxLength={256} required type="password" value={oldPassword} onChange={(event) => setOldPassword(event.target.value)} /></label>
+          <label>New password<input autoComplete="new-password" minLength={8} maxLength={256} pattern={ADMIN_PASSWORD_PATTERN} title={ADMIN_PASSWORD_HINT} required type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+          <label>Confirm new password<input autoComplete="new-password" minLength={8} maxLength={256} pattern={ADMIN_PASSWORD_PATTERN} title={ADMIN_PASSWORD_HINT} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+          <p className="password-requirements">{ADMIN_PASSWORD_HINT}</p>
           <button className="primary-button" disabled={busy} type="submit">{busy ? "Please wait…" : "Change password"}</button>
         </form>
       </section>

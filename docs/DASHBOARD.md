@@ -18,6 +18,8 @@ The installer builds the frontend, creates `dashboard/backend/.venv`, installs t
 
 On first installation, the script prints the one-time setup token to the local installation console. Open <http://127.0.0.1:8765>, submit the token, and choose a permanent administrator password. The token expires after 30 minutes, is single-use, and is stored only as a digest. Re-running the installer after an administrator is configured does not issue a setup token.
 
+Administrator setup, password recovery, and password changes require 8–256 characters, including at least one uppercase letter, one lowercase letter, and one digit. Symbols are optional.
+
 Remove the current user's task and its controller process without deleting runtime data:
 
 ```powershell
@@ -133,13 +135,13 @@ These checks require a separately authorized operator window. Do not stop, resta
 
 - [ ] Install and uninstall the named task as a standard user; verify the controller runs only after sign-in and stops at sign-out.
 - [ ] Confirm Docker Desktop and the controller use the same Windows account; verify Docker unavailable reports `Unknown` and recovers when Docker is available.
-- [ ] Confirm controller access is loopback-only; verify the model API has no host-published port and remains on `ddu_inference_bus`.
+- [x] Confirm controller access is loopback-only; verify the model API has no host-published port and remains on `ddu_inference_bus`. A bounded GET check also confirmed the `ddu-narrator` model alias; see [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md).
 - [ ] Verify first-run setup, sign-in, reload reauthentication, sign-out, session revocation, password change, recovery, and current-user runtime ACLs.
 - [ ] Verify DPAPI CurrentUser behavior in this account and from a different Windows user; the other user must see a locked vault.
 - [ ] Record NVML availability, host/controller CPU and RAM, and controller startup cost during a normal workload without changing inference.
 - [ ] Verify expected model alias, revision, image digest, no prompt/response collection, and no credential values in status or metadata.
 
-The controller has not been installed or launched for this implementation. The host-level checks above remain pending. Existing Phase 0 values below are historical baseline observations only.
+The current-user Scheduled Task was installed and launched from the stable `D:\projects\Local-AI-API-LITE` checkout on 2026-10-29. Its liveness endpoint and loopback binding were verified; first-run administrator setup is still required. Sign-in/sign-out lifecycle, Docker Desktop loss/recovery, cross-user DPAPI, and live inference loading/rollback checks remain pending. See [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated host evidence. Existing Phase 0 values below are historical baseline observations only.
 
 See [DASHBOARD_SECURITY.md](DASHBOARD_SECURITY.md) for the security boundary and [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated automated evidence and pending operator checks.
 

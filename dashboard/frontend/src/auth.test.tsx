@@ -16,6 +16,65 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("dashboard authentication", () => {
+  it("accepts an eight-character setup password without a symbol", () => {
+    render(
+      <AuthPage
+        mode="setup-required"
+        onSetup={vi.fn()}
+        onLogin={vi.fn()}
+        onRecovery={vi.fn()}
+        error={null}
+        notice={null}
+      />,
+    );
+    const password = screen.getByLabelText("New administrator password") as HTMLInputElement;
+
+    fireEvent.change(password, { target: { value: "Abcd1234" } });
+
+    expect(password.checkValidity()).toBe(true);
+    expect(screen.getByText(/Symbols are optional/)).toBeTruthy();
+  });
+
+  it.each([
+    ["uppercase letter", "lowercasepassword1"],
+    ["lowercase letter", "UPPERCASEPASSWORD1"],
+    ["number", "PasswordWithoutDigits"],
+  ])("requires a %s for setup passwords", (_requirement, value) => {
+    render(
+      <AuthPage
+        mode="setup-required"
+        onSetup={vi.fn()}
+        onLogin={vi.fn()}
+        onRecovery={vi.fn()}
+        error={null}
+        notice={null}
+      />,
+    );
+    const password = screen.getByLabelText("New administrator password") as HTMLInputElement;
+
+    fireEvent.change(password, { target: { value } });
+
+    expect(password.checkValidity()).toBe(false);
+  });
+
+  it("allows an eight-character password in the sign-in field", () => {
+    render(
+      <AuthPage
+        mode="logged-out"
+        onSetup={vi.fn()}
+        onLogin={vi.fn()}
+        onRecovery={vi.fn()}
+        error={null}
+        notice={null}
+      />,
+    );
+    const password = screen.getByLabelText("Administrator password") as HTMLInputElement;
+
+    fireEvent.change(password, { target: { value: "Abcd1234" } });
+
+    expect(password.checkValidity()).toBe(true);
+  });
+
   it("returns setup-required state from the same-origin auth endpoint", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ setup_required: true, authenticated: false }),

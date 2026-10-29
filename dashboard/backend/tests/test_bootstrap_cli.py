@@ -32,10 +32,10 @@ def test_issue_token_cli_prints_unique_token_only_to_console(monkeypatch, tmp_pa
         token_rows = connection.execute("SELECT token_digest FROM auth_tokens").fetchall()
     assert all(token not in digest for token in (first, second) for (digest,) in token_rows)
     with pytest.raises(auth.AuthenticationError):
-        service.setup(first, "a-long-password-for-dashboard")
-    service.setup(second, "a-long-password-for-dashboard")
+        service.setup(first, "LongPasswordForDashboard7")
+    service.setup(second, "LongPasswordForDashboard7")
     with pytest.raises(auth.AuthenticationError):
-        service.setup(second, "a-different-long-password")
+        service.setup(second, "DifferentLongPassword7")
 
 
 def test_recovery_cli_revokes_sessions_and_preserves_vault_data(monkeypatch, tmp_path):
@@ -46,8 +46,8 @@ def test_recovery_cli_revokes_sessions_and_preserves_vault_data(monkeypatch, tmp
     store = persistence.MetadataStore(tmp_path / "metadata.sqlite3")
     service = auth.AuthService(store)
     setup_token = service.issue_bootstrap()
-    service.setup(setup_token, "a-long-password-for-dashboard")
-    login = service.login("a-long-password-for-dashboard", "127.0.0.1")
+    service.setup(setup_token, "LongPasswordForDashboard7")
+    login = service.login("LongPasswordForDashboard7", "127.0.0.1")
     control_state = load_dashboard_module("control_state")
     jobs = load_dashboard_module("jobs")
     store.migrate(3, control_state.CONTROL_SCHEMA)
@@ -80,6 +80,6 @@ def test_recovery_cli_revokes_sessions_and_preserves_vault_data(monkeypatch, tmp
         ).fetchone()[0]
     assert vault_value == b"encrypted synthetic value"
     assert recovery_token not in stored_token
-    service.recover_with_local_token(recovery_token, "a-new-long-password-for-dashboard")
+    service.recover_with_local_token(recovery_token, "NewLongPasswordForDashboard7")
     with pytest.raises(auth.AuthenticationError):
-        service.recover_with_local_token(recovery_token, "another-new-long-password")
+        service.recover_with_local_token(recovery_token, "AnotherNewLongPassword8")

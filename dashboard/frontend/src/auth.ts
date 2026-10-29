@@ -5,6 +5,10 @@ export type AuthState =
 
 export type AuthenticatedState = Extract<AuthState, { kind: "authenticated" }>;
 
+export const ADMIN_PASSWORD_PATTERN = "(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,256}";
+export const ADMIN_PASSWORD_HINT =
+  "Use 8–256 characters, including uppercase, lowercase, and a number. Symbols are optional.";
+
 export interface SessionMetadata {
   id: string;
   created_at: string;
