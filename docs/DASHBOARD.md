@@ -98,7 +98,7 @@ The Benchmarks page exposes only three fixed jobs: server readiness, the existin
 
 Job metadata is stored in the dashboard's local SQLite database and artifacts under its per-user data directory, outside the repository. Job output is size limited and projected onto an allowlist before it is stored; prompts, completions, credentials, and full HTTP error bodies are discarded. The database retains at most 500 job rows, while sanitized JSONL artifacts are capped at 30 files and 50 MiB. When metadata history reaches its cap, preview cleanup and explicitly confirm it before starting more jobs. Results compare as comparable only when job type, profile/revision, engine image, context/sequence settings, host/GPU, and script version match. Differences are shown instead of combining incompatible measurements.
 
-The page polls job history while a job is queued or running. A cancellation request stops only the dashboard's ephemeral job container. It does not stop or reconfigure the inference service. The controller does not collect benchmark prompt or response content.
+The page polls job history while a job is queued or running. A cancellation or timeout stops only the dashboard's ephemeral job container; the activity gate stays blocked until Docker confirms that container is stopped. If Docker cannot confirm termination, the job reports a runtime failure and later activity requests must reconcile that container first. This does not stop or reconfigure the inference service. The controller does not collect benchmark prompt or response content.
 
 ## Sanitized service logs
 
