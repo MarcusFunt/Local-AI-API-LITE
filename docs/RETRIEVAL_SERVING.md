@@ -1,6 +1,6 @@
 # Retrieval inference serving design
 
-**Status:** M0 design for implementation; no retrieval model has been installed or started.
+**Status:** M1 worker implementation with fake-adapter validation; model installation, worker startup, and host acceptance remain pending.
 
 **Baseline:** `main` at `b6311366df8896ce356b2dfdaf86cc6690179062` (2026-10-29).
 **Scope:** CPU embeddings (M1) and CPU reranking (M2). Host resource acceptance, retrieval-quality evaluation, and game integration remain future operator/project gates.
@@ -55,6 +55,15 @@ For `query`, use the versioned instruction `Instruct: Given a question, retrieve
 
 The model weights and tokenizer are not installed by this change. Readiness must remain 503 with sanitized `missing_artifact` when the cache is absent, while liveness stays healthy.
 
+For a future operator-approved window, create an absolute cache directory outside the repository, copy `deploy/retrieval/.env.example` to `deploy/retrieval/.env`, and set `MODEL_CACHE_DIR` to that directory. The explicit installer profile supports a no-write plan followed by a deliberate install:
+
+```sh
+docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml --profile install run --rm model-installer --plan
+docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml --profile install run --rm model-installer --install
+```
+
+Only after separately reviewing the cache and host budget should the operator build/start the worker with `docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml up -d embed`. These commands are documentation; this implementation did not run them.
+
 ## M2: reranking
 
 | Field | Contract |
@@ -88,12 +97,12 @@ The GTE model uses custom Transformers code. The loader must set `trust_remote_c
 | Python base | `python:3.11.18-slim-bookworm@sha256:061c190f3d5815b341a18dfe8a45771f8ba68c15a607ea56997fde3009ac4eec` (linux/amd64) |
 | FastAPI | `0.162.0` |
 | Uvicorn | `0.54.0` |
-| Sentence Transformers | `5.7.0` |
 | Transformers | `4.57.6` |
+| Hugging Face Hub | `0.36.2` |
 | PyTorch | `2.7.0` CPU wheel |
 | Hugging Face model/code revisions | Exact revisions in the M1/M2 tables above |
 
-The full transitive dependency lock must pin exact versions and artifact hashes. Keep model-serving dependencies inside `services/retrieval`; do not add them to the dashboard or repository-wide development requirements.
+Sentence Transformers `5.7.0` was evaluated as the initial candidate. The implementation uses the direct Transformers model/tokenizer path so Qwen's last-token pooling and offline `local_files_only` behavior are explicit, while GTE can bind its custom `code_revision`. This avoids adding unused Sentence Transformers, scikit-learn, and SciPy dependencies to the worker image. The full transitive dependency lock pins exact versions and artifact hashes. Keep model-serving dependencies inside `services/retrieval`; do not add them to the dashboard or repository-wide development requirements.
 
 Initial Compose ceilings are provisional, not measured residency budgets: embedding 4 CPUs / 5 GiB memory; reranking 2 CPUs / 4 GiB memory. Both are CPU-only. These ceilings do not establish that the pair can run resident on the target host. The 2026-10-29 host snapshot found 5.77 GiB free Windows-visible RAM and 9,904 MiB device-wide GPU allocation; neither metric approves a worker launch, and the latter is not per-process usage. Keep actual installation, startup, RSS, memory-pressure, latency, and LLM-impact checks pending for a separately authorized operator window.
 

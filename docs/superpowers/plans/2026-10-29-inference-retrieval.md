@@ -6,7 +6,7 @@
 
 **Architecture:** Build one small Python worker image from a digest-pinned Python base and a fully pinned dependency lock. Run it as two independent services on the external `ddu_inference_bus`, with fixed model adapters, offline-only loading from an explicit persistent cache, fake-adapter CI tests, and no host-published ports.
 
-**Tech Stack:** Python 3.11, FastAPI 0.162.0, Uvicorn 0.54.0, Sentence Transformers 5.7.0, Transformers 4.57.6, PyTorch 2.7.0 CPU, Hugging Face Hub snapshots, Docker Compose.
+**Tech Stack:** Python 3.11, FastAPI 0.162.0, Uvicorn 0.54.0, Transformers 4.57.6, Hugging Face Hub 0.36.2, PyTorch 2.7.0 CPU, Docker Compose. Sentence Transformers 5.7.0 is evaluated but not retained unless the pinned Qwen recipe can be implemented with its offline and pooling contracts without adding unused dependencies.
 
 **Spec:** `C:/Users/marcu/Downloads/Local-AI-API-LITE_Inference_Expansion_Plan_2026-10-29 (1).md`, phases 0–2.
 
@@ -64,15 +64,15 @@
 
 **Interfaces:** Provides `create_embedding_app(adapter_factory=...)`, `EmbeddingRequest`, `EmbeddingResponse`, and model registry metadata. The reranker task consumes the shared error/readiness/queue helpers and image.
 
-- [ ] Add the embedding and deployment tests first, including ordered 1024-vectors, required mode, request bounds, sanitized errors, non-finite adapter output, oversized input rejected before adapter calls, queue overload, offline missing-artifact state, and no-port/no-GPU Compose configuration.
-- [ ] Run the named tests and confirm they fail because the embedding worker is absent.
-- [ ] Implement typed request/response contracts and a fake-injectable FastAPI app with `/health`, `/ready`, `/v1/models`, and `/v1/embeddings`.
-- [ ] Implement fixed Qwen3 loading from the pinned local Hub snapshot with `local_files_only=True`, query-only instruction, document plain text, bounded token counts, and normalized 1024-D float32 output.
-- [ ] Implement sanitized validation/inference errors and a bounded single-worker queue; never return raw exceptions or log request bodies.
-- [ ] Add an explicit `--plan`/`--install` artifact installer for only the pinned embedding/model-code snapshots; normal startup stays offline.
-- [ ] Add the independent CPU-only `ddu-embed:8080` Compose service with read-only model cache, provisional CPU/RAM caps, external network alias, and no `ports`, `gpus`, `depends_on`, or restart policy.
-- [ ] Add CI validation for retrieval Compose rendering and run the worker/deployment tests; keep all existing CI commands intact.
-- [ ] Commit as `feat: add offline CPU embedding worker`.
+- [x] Add the embedding and deployment tests first, including ordered 1024-vectors, required mode, request bounds, sanitized errors, non-finite adapter output, oversized input rejected before adapter calls, queue overload, offline missing-artifact state, and no-port/no-GPU Compose configuration.
+- [x] Run the named tests and confirm they fail because the embedding worker is absent.
+- [x] Implement typed request/response contracts and a fake-injectable FastAPI app with `/health`, `/ready`, `/v1/models`, and `/v1/embeddings`.
+- [x] Implement fixed Qwen3 loading from the pinned local Hub snapshot with `local_files_only=True`, query-only instruction, document plain text, bounded token counts, and normalized 1024-D float32 output.
+- [x] Implement sanitized validation/inference errors and a bounded single-worker queue; never return raw exceptions or log request bodies.
+- [x] Add an explicit `--plan`/`--install` artifact installer for only the pinned embedding/model-code snapshots; normal startup stays offline.
+- [x] Add the independent CPU-only `ddu-embed:8080` Compose service with read-only model cache, provisional CPU/RAM caps, external network alias, and no `ports`, `gpus`, `depends_on`, or restart policy.
+- [x] Add CI validation for retrieval Compose rendering and run the worker/deployment tests; keep all existing CI commands intact.
+- [x] Commit as `feat: add offline CPU embedding worker`.
 
 ### Task 3: M2 CPU reranking worker
 
