@@ -2,7 +2,7 @@
 
 **Record date:** 2026-10-29
 **Branch:** `codex/fix-dashboard-task-identity` (post-merge follow-up)
-**Pull request:** [PR #3](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/3), merged by the repository owner as `4946530` on 2026-10-29.
+**Pull requests:** [PR #3](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/3), merged by the repository owner as `4946530`; [PR #4](https://github.com/MarcusFunt/Local-AI-API-LITE/pull/4), open for the task-identity follow-up.
 
 ## Automated checks
 
@@ -19,7 +19,7 @@ The implementation checks used mocked Docker and PostgreSQL adapters. No inferen
 | Compose rendering | Passed | `docker compose --env-file .env.example config --quiet`; no service was started. |
 | YAML lint | Passed | `yamllint -d relaxed compose.yaml .github/workflows/ci.yml` against LF-normalized source; this Windows checkout stores working copies with CRLF. |
 | Shell lint | Passed | ShellCheck passed for `scripts/check_prereqs.sh` via WSL after normalizing the Windows checkout's CRLF line endings. |
-| Fresh whole-branch review | Passed for PR #3; local follow-up has no Critical/Important findings | The Compose validation gap, DSN validation echo, and vault-metadata completeness finding were addressed with regression tests and schema migration 7. The scheduled-task SID fix passed local regression tests; GitHub CI was not yet run when this snapshot was recorded. One Minor is deferred: add an automated negative assertion for a different task principal; the helper's rejection of `NT AUTHORITY\SYSTEM` was checked manually. |
+| Fresh whole-branch review | Passed for PR #3; follow-up reviewed with no Critical/Important findings | The Compose validation gap, DSN validation echo, and vault-metadata completeness finding were addressed with regression tests and schema migration 7. Follow-up PR #4's GitHub Actions checks passed on `9522918`. One Minor is deferred: add an automated negative assertion for a different task principal; the helper's rejection of `NT AUTHORITY\SYSTEM` was checked manually. |
 | Diff whitespace | Passed | `git diff --check` on the local follow-up changes. |
 | Windows DPAPI CurrentUser round trip | Passed in focused automated check | Recorded during Task 3 on this Windows host. Cross-user behavior remains pending below. |
 | Local browser/controller session | Partial | The current-user task launches the controller, its liveness endpoint is healthy, setup is required, and an unauthenticated status request returns 401. Administrator setup/login remains pending. |
@@ -47,4 +47,4 @@ These checks require a separate operator window. Keep them pending until an oper
 - No live Compose Start, Stop, Restart, profile switch, job, or database probe was run.
 - No host port was exposed, and no model cache, database, or other persistent volume was removed.
 - PR #3 was merged by the repository owner; Codex did not perform a deployment or publish a release.
-- The task-identity fix is a post-merge follow-up branch and is not part of PR #3's merged commit.
+- The task-identity fix is a post-merge follow-up in open PR #4; PR #3 remains merged by the repository owner.
