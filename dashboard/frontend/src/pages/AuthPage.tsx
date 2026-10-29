@@ -1,11 +1,15 @@
 import { useState, type FormEvent } from "react";
-import { ADMIN_PASSWORD_HINT, ADMIN_PASSWORD_PATTERN } from "../auth";
+import {
+  ADMIN_PASSWORD_HINT,
+  ADMIN_PASSWORD_PATTERN,
+  adminPasswordValidationTitle,
+} from "../auth";
 
 type AuthMode = "setup-required" | "logged-out";
 
 interface AuthPageProps {
   mode: AuthMode;
-  onSetup: (token: string, password: string) => Promise<void>;
+  onSetup: (password: string) => Promise<void>;
   onLogin: (password: string) => Promise<void>;
   onRecovery: (token: string, newPassword: string) => Promise<void>;
   error: string | null;
@@ -13,7 +17,7 @@ interface AuthPageProps {
 }
 
 export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: AuthPageProps) {
-  const [token, setToken] = useState("");
+  const [recoveryToken, setRecoveryToken] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [recoveryMode, setRecoveryMode] = useState(false);
@@ -39,9 +43,9 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
     }
     setBusy(true);
     try {
-      if (mode === "setup-required") await onSetup(token, password);
-      else await onRecovery(token, password);
-      setToken("");
+      if (mode === "setup-required") await onSetup(password);
+      else await onRecovery(recoveryToken, password);
+      setRecoveryToken("");
       setPassword("");
       setConfirmation("");
       setRecoveryMode(false);
@@ -65,7 +69,7 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
         <h1 id="auth-title">{title}</h1>
         <p className="auth-copy">
           {mode === "setup-required"
-            ? "Use the one-time token printed by the local installer, then choose a permanent password."
+            ? "Create an administrator password to finish setting up this local dashboard."
             : recoveryMode
               ? "Enter the one-time recovery token generated locally and choose a new password."
               : "Sign in to view local service status and dashboard settings."}
@@ -73,14 +77,14 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
         {notice && <p className="auth-notice" role="status">{notice}</p>}
         {(formError || error) && <p className="auth-error" role="alert">{formError ?? error}</p>}
         <form className="auth-form" onSubmit={(event) => void submit(event)}>
-          {showPasswordForm && (
+          {showPasswordForm && recoveryMode && (
             <label>
-              {mode === "setup-required" ? "One-time setup token" : "One-time recovery token"}
+              One-time recovery token
               <input
                 autoComplete="off"
                 required
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
+                value={recoveryToken}
+                onChange={(event) => setRecoveryToken(event.target.value)}
                 type="password"
               />
             </label>
@@ -90,10 +94,10 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
             <input
               autoComplete={showPasswordForm ? "new-password" : "current-password"}
               required
-              minLength={8}
-              maxLength={256}
+              minLength={showPasswordForm ? 8 : undefined}
+              maxLength={showPasswordForm ? 256 : undefined}
               pattern={showPasswordForm ? ADMIN_PASSWORD_PATTERN : undefined}
-              title={showPasswordForm ? ADMIN_PASSWORD_HINT : undefined}
+              title={showPasswordForm ? adminPasswordValidationTitle(password) : undefined}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
@@ -109,7 +113,7 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
                 minLength={8}
                 maxLength={256}
                 pattern={ADMIN_PASSWORD_PATTERN}
-                title={ADMIN_PASSWORD_HINT}
+                title={adminPasswordValidationTitle(confirmation)}
                 value={confirmation}
                 onChange={(event) => setConfirmation(event.target.value)}
                 type="password"
@@ -125,13 +129,13 @@ export function AuthPage({ mode, onSetup, onLogin, onRecovery, error, notice }: 
             setRecoveryMode((previous) => !previous);
             setPassword("");
             setConfirmation("");
-            setToken("");
+            setRecoveryToken("");
             setFormError(null);
           }}>
             {recoveryMode ? "Return to sign in" : "Use a local recovery token"}
           </button>
         )}
-        <p className="auth-footnote">Session cookies stay local to this browser. Passwords and tokens are not saved here.</p>
+        <p className="auth-footnote">Session cookies stay local to this browser. Passwords and recovery tokens are not saved here.</p>
       </section>
     </main>
   );

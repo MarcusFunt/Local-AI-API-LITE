@@ -34,6 +34,48 @@ def test_auth_state_and_minimal_liveness_are_public(tmp_path):
         assert client.get(path).status_code == 401
 
 
+def test_setup_sets_admin_password_without_token_and_reports_password_policy(tmp_path):
+    client = _client(tmp_path)
+
+    rejected = client.post("/auth/setup", json_body={"password": "short"})
+
+    assert rejected.status_code == 422
+    assert rejected.json() == {
+        "detail": "Password does not meet these requirements: at least 8 characters; "
+        "at least one uppercase letter; at least one digit."
+    }
+    assert client.get("/auth/state").json()["setup_required"] is True
+
+    accepted = client.post("/auth/setup", json_body={"password": "Abcd1234"})
+    assert accepted.status_code == 204
+    assert client.get("/auth/state").json()["setup_required"] is False
+
+
+def test_setup_rejects_second_administrator_creation(tmp_path):
+    client = _client(tmp_path)
+    assert client.post("/auth/setup", json_body={"password": PASSWORD}).status_code == 204
+
+    rejected = client.post(
+        "/auth/setup",
+        json_body={"password": "DifferentPass123"},
+    )
+
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "Administrator setup is already complete. Sign in instead."}
+
+
+def test_setup_no_longer_accepts_a_setup_token_field(tmp_path):
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/auth/setup",
+        json_body={"token": "legacy-token", "password": PASSWORD},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/auth/state").json()["setup_required"] is True
+
+
 def test_login_sets_rotating_http_only_same_site_cookie(tmp_path):
     client = _client(tmp_path)
     client.setup_admin(PASSWORD)
@@ -52,10 +94,47 @@ def test_login_sets_rotating_http_only_same_site_cookie(tmp_path):
     assert second.json()["csrf_token"]
 
 
+def test_login_explains_when_administrator_setup_is_incomplete(tmp_path):
+    client = _client(tmp_path)
+
+    response = client.post("/auth/login", json_body={"password": PASSWORD})
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Administrator setup is not complete. Set up the administrator first."
+    }
+
+
+def test_login_explains_password_mismatch(tmp_path):
+    client = _client(tmp_path)
+    client.setup_admin(PASSWORD)
+
+    response = client.post("/auth/login", json_body={"password": "WrongPass123"})
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "The administrator password is incorrect. Check it and try again."
+    }
+
+
+def test_login_explains_the_exact_rate_limit(tmp_path):
+    client = _client(tmp_path)
+    client.setup_admin(PASSWORD)
+    for _ in range(5):
+        assert client.post("/auth/login", json_body={"password": "WrongPass123"}).status_code == 401
+
+    response = client.post("/auth/login", json_body={"password": PASSWORD})
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "detail": "Too many sign-in attempts. The limit is 5 failed attempts in a rolling 15-minute "
+        "window. Wait until an earlier failed attempt is more than 15 minutes old, then try again."
+    }
+
+
 def test_secure_cookie_is_set_for_https(tmp_path):
     client = _client(tmp_path, base_url="https://127.0.0.1:8765")
-    token = client.app.state.auth_service.issue_bootstrap()
-    setup = client.post("/auth/setup", json_body={"token": token, "password": PASSWORD})
+    setup = client.post("/auth/setup", json_body={"password": PASSWORD})
     login = client.post("/auth/login", json_body={"password": PASSWORD})
 
     assert setup.status_code == 204
@@ -65,10 +144,9 @@ def test_secure_cookie_is_set_for_https(tmp_path):
 
 def test_wrong_host_or_origin_is_rejected(tmp_path):
     client = _client(tmp_path)
-    token = client.app.state.auth_service.issue_bootstrap()
     response = client.post(
         "/auth/setup",
-        json_body={"token": token, "password": PASSWORD},
+        json_body={"password": PASSWORD},
         headers={"host": "attacker.example", "origin": "http://attacker.example"},
     )
 
@@ -78,10 +156,9 @@ def test_wrong_host_or_origin_is_rejected(tmp_path):
 
 def test_wrong_origin_is_rejected_for_loopback_host(tmp_path):
     client = _client(tmp_path)
-    token = client.app.state.auth_service.issue_bootstrap()
     response = client.post(
         "/auth/setup",
-        json_body={"token": token, "password": PASSWORD},
+        json_body={"password": PASSWORD},
         headers={"origin": "http://attacker.example"},
     )
 

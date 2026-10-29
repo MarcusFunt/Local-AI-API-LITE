@@ -7,9 +7,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.auth import (
+    AdministratorAlreadyConfiguredError,
+    AdministratorNotConfiguredError,
     AuthenticationError,
     AuthService,
     AuthSession,
+    InvalidCredentialsError,
+    LoginRateLimitedError,
+    PasswordPolicyError,
     require_csrf,
     require_session,
     validate_local_request,
@@ -20,8 +25,9 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 class SetupRequest(BaseModel):
-    token: str
     password: str
+
+    model_config = {"extra": "forbid"}
 
 
 class LoginRequest(BaseModel):
@@ -60,9 +66,16 @@ def auth_state(request: Request) -> dict[str, bool]:
 def setup(body: SetupRequest, request: Request) -> Response:
     validate_local_request(request)
     try:
-        _service(request).setup(body.token, body.password)
+        _service(request).setup(body.password)
+    except PasswordPolicyError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+    except AdministratorAlreadyConfiguredError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
     except AuthenticationError:
-        raise _auth_failure() from None
+        raise HTTPException(
+            status_code=401,
+            detail="Administrator setup could not be completed. Refresh the dashboard and try again.",
+        ) from None
     return Response(status_code=204)
 
 
@@ -72,6 +85,12 @@ def login(body: LoginRequest, request: Request) -> Response:
     client_key = request.client.host if request.client else "unknown"
     try:
         result = _service(request).login(body.password, client_key)
+    except AdministratorNotConfiguredError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except LoginRateLimitedError as error:
+        raise HTTPException(status_code=429, detail=str(error)) from None
+    except InvalidCredentialsError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
     except AuthenticationError:
         raise _auth_failure() from None
 

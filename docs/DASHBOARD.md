@@ -16,7 +16,7 @@ From the repository root, run:
 
 The installer builds the frontend, creates `dashboard/backend/.venv`, installs the dashboard runtime, and registers and starts a current-user Scheduled Task named `Local-AI-API-LITE Dashboard Controller`. The task has an interactive sign-in trigger, limited run level, and three restart attempts at one-minute intervals. Its only application command runs Uvicorn at `127.0.0.1:8765`. It does not run Compose, start inference, or change Docker Desktop settings. It runs in the interactive Windows account that can access Docker Desktop, not as a machine-wide service, and is unavailable before that user signs in.
 
-On first installation, the script prints the one-time setup token to the local installation console. Open <http://127.0.0.1:8765>, submit the token, and choose a permanent administrator password. The token expires after 30 minutes, is single-use, and is stored only as a digest. Re-running the installer after an administrator is configured does not issue a setup token.
+On first installation, open <http://127.0.0.1:8765> and create an administrator password. Initial setup does not require a token. The first successful setup request creates the sole administrator; subsequent requests must sign in instead. Because the controller is local-only, set the password from the Windows account that owns the dashboard before allowing other local users or processes access to that account.
 
 Administrator setup, password recovery, and password changes require 8–256 characters, including at least one uppercase letter, one lowercase letter, and one digit. Symbols are optional.
 
@@ -47,14 +47,13 @@ Run Python module commands from `dashboard/backend` so Python can import the `ap
 
 ## Administrator setup and recovery
 
-To issue a replacement initial setup token, or recover a configured administrator, run one of these commands from `dashboard/backend` as the same Windows account. The token appears only in the local terminal; do not copy it into chat, logs, screenshots, tickets, or source control.
+To recover a configured administrator, run this command from `dashboard/backend` as the same Windows account. The recovery token appears only in the local terminal; do not copy it into chat, logs, screenshots, tickets, or source control.
 
 ```powershell
-.\.venv\Scripts\python.exe -m app.bootstrap issue-token
 .\.venv\Scripts\python.exe -m app.bootstrap recover-admin
 ```
 
-`issue-token` is valid only before initial setup. It invalidates any earlier unused setup token. `recover-admin` revokes active dashboard sessions, invalidates any earlier recovery token, and prints a new one-use token that expires after 30 minutes. Recovery changes the password only after the token is submitted through the local UI and does not delete vault values.
+`recover-admin` revokes active dashboard sessions, invalidates any earlier recovery token, and prints a new one-use token that expires after 30 minutes. Recovery changes the password only after the token is submitted through the local UI and does not delete vault values.
 
 Dashboard sessions last eight hours and use a server-managed HttpOnly cookie. The browser keeps its CSRF value only in memory, so reloading the page requires signing in again. Sign-out, password change, session revocation, and recovery revoke server-side sessions as appropriate. Dashboard authentication is separate from Windows and Docker Desktop authentication.
 
@@ -77,7 +76,7 @@ The command validates the pinned Compose project, external `ddu_inference_bus` n
 ## Authenticated read-only API
 
 - `GET /api/control/v1/controller/health` is minimal controller liveness and does not consult inference.
-- `GET /auth/state` reports whether one-time setup is required and whether the browser's HttpOnly cookie has an active session.
+- `GET /auth/state` reports whether initial administrator setup is required and whether the browser's HttpOnly cookie has an active session.
 - `GET /api/control/v1/status` requires an administrator session and returns cached inference state, the observed runtime configuration, telemetry, and snapshot freshness/error metadata.
 - `GET /api/control/v1/telemetry`, `GET /api/control/v1/profiles`, and `GET /api/control/v1/operations/state` require an administrator session.
 - `POST /api/control/v1/operations/start`, `/stop`, `/restart`, and `/apply-profile` require an administrator session and CSRF token. Start and profile changes accept only a versioned profile ID; the API exposes no shell, Compose argument, prompt, or arbitrary command input.

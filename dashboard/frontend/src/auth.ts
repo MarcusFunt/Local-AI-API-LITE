@@ -9,6 +9,23 @@ export const ADMIN_PASSWORD_PATTERN = "(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,256}
 export const ADMIN_PASSWORD_HINT =
   "Use 8–256 characters, including uppercase, lowercase, and a number. Symbols are optional.";
 
+export function adminPasswordIssues(password: string): string[] {
+  const issues: string[] = [];
+  if (password.length < 8) issues.push("at least 8 characters");
+  if (password.length > 256) issues.push("no more than 256 characters");
+  if (!/[A-Z]/.test(password)) issues.push("at least one uppercase letter");
+  if (!/[a-z]/.test(password)) issues.push("at least one lowercase letter");
+  if (!/[0-9]/.test(password)) issues.push("at least one digit");
+  return issues;
+}
+
+export function adminPasswordValidationTitle(password: string): string {
+  const issues = adminPasswordIssues(password);
+  return issues.length
+    ? `Password does not meet these requirements: ${issues.join("; ")}.`
+    : ADMIN_PASSWORD_HINT;
+}
+
 export interface SessionMetadata {
   id: string;
   created_at: string;
@@ -18,7 +35,7 @@ export interface SessionMetadata {
 
 export interface AuthClient {
   readState(): Promise<Exclude<AuthState, AuthenticatedState>>;
-  setup(token: string, password: string): Promise<void>;
+  setup(password: string): Promise<void>;
   login(password: string): Promise<AuthenticatedState>;
   recovery(token: string, newPassword: string): Promise<void>;
   logout(csrfToken: string): Promise<void>;
@@ -35,6 +52,22 @@ export class AuthRequestError extends Error {
     super(message);
     this.name = "AuthRequestError";
   }
+}
+
+function errorFallback(path: string, status: number): string {
+  if (path === "/auth/setup" && status === 422) return ADMIN_PASSWORD_HINT;
+  if (path === "/auth/setup" && status === 409) {
+    return "Administrator setup is already complete. Sign in instead.";
+  }
+  if (path === "/auth/login" && status === 401) {
+    return "The administrator password is incorrect. Check it and try again.";
+  }
+  if (path === "/auth/login" && status === 429) {
+    return "Too many sign-in attempts. The limit is 5 failed attempts in a rolling 15-minute window. " +
+      "Wait until an earlier failed attempt is more than 15 minutes old, then try again.";
+  }
+  if (status === 401) return "Authentication failed";
+  return `Dashboard request failed (${status})`;
 }
 
 export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
@@ -56,7 +89,23 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      const message = response.status === 401 ? "Authentication failed" : `Dashboard request failed (${response.status})`;
+      let actionableDetail: string | null = null;
+      if (path === "/auth/setup" || path === "/auth/login") {
+        try {
+          const payload: unknown = await response.json();
+          if (
+            typeof payload === "object" &&
+            payload !== null &&
+            "detail" in payload &&
+            typeof payload.detail === "string"
+          ) {
+            actionableDetail = payload.detail;
+          }
+        } catch {
+          // Keep the endpoint-specific fallback when the response is not JSON.
+        }
+      }
+      const message = actionableDetail ?? errorFallback(path, response.status);
       throw new AuthRequestError(message, response.status);
     }
     if (response.status === 204) return undefined as T;
@@ -66,14 +115,14 @@ export function createAuthClient(fetcher: typeof fetch = fetch): AuthClient {
   return {
     async readState() {
       const state = await request<{ setup_required: boolean; authenticated: boolean }>("/auth/state");
-      // A page reload cannot restore the one-time CSRF token, which is kept only in memory.
+      // A page reload cannot restore the CSRF token, which is kept only in memory.
       if (state.setup_required) return { kind: "setup-required" };
       return state.authenticated
         ? { kind: "logged-out", reauthenticate: true }
         : { kind: "logged-out" };
     },
-    async setup(token, password) {
-      await request<void>("/auth/setup", "POST", { token, password });
+    async setup(password) {
+      await request<void>("/auth/setup", "POST", { password });
     },
     async login(password) {
       const result = await request<{ csrf_token: string; expires_at: string }>(

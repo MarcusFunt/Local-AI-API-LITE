@@ -47,14 +47,6 @@ try {
     & $DashboardPython -m pip install -e '.[gpu]'
     if ($LASTEXITCODE -ne 0) { throw 'Installing dashboard dependencies failed.' }
 
-    Write-Host 'If this is the first installation, copy the one-time setup token below into the local dashboard.'
-    & $DashboardPython -m app.bootstrap issue-token
-    $TokenExitCode = $LASTEXITCODE
-    if ($TokenExitCode -eq 2) {
-        Write-Host 'An administrator is already configured; no setup token was issued.'
-    } elseif ($TokenExitCode -ne 0) {
-        throw 'Issuing the dashboard setup token failed.'
-    }
 } finally {
     Pop-Location
 }

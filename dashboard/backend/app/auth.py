@@ -46,8 +46,45 @@ AUTH_SCHEMA = [
 class AuthenticationError(RuntimeError):
     """A deliberately generic authentication failure."""
 
+    def __init__(self, message: str = "Authentication failed") -> None:
+        super().__init__(message)
+
+
+class PasswordPolicyError(AuthenticationError):
+    """A new password does not meet the administrator password policy."""
+
+
+class AdministratorAlreadyConfiguredError(AuthenticationError):
+    """Initial setup was completed before this request."""
+
     def __init__(self) -> None:
-        super().__init__("Authentication failed")
+        super().__init__("Administrator setup is already complete. Sign in instead.")
+
+
+class InvalidCredentialsError(AuthenticationError):
+    """The supplied administrator password does not match."""
+
+    def __init__(self) -> None:
+        super().__init__("The administrator password is incorrect. Check it and try again.")
+
+
+class LoginRateLimitedError(AuthenticationError):
+    """The client has reached the configured rolling login-failure limit."""
+
+    def __init__(self) -> None:
+        window_minutes = int(LOGIN_WINDOW.total_seconds() // 60)
+        super().__init__(
+            f"Too many sign-in attempts. The limit is {LOGIN_FAILURE_LIMIT} failed attempts "
+            f"in a rolling {window_minutes}-minute window. Wait until an earlier failed "
+            f"attempt is more than {window_minutes} minutes old, then try again."
+        )
+
+
+class AdministratorNotConfiguredError(AuthenticationError):
+    """The login endpoint was reached before an administrator was configured."""
+
+    def __init__(self) -> None:
+        super().__init__("Administrator setup is not complete. Set up the administrator first.")
 
 
 class Argon2PasswordHasher:
@@ -141,11 +178,6 @@ class AuthService:
             count = connection.execute("SELECT COUNT(*) FROM admin_account").fetchone()[0]
         return count == 0
 
-    def issue_bootstrap(self) -> str:
-        if not self.is_setup_required():
-            raise AuthenticationError()
-        return self._issue_local_token("setup")
-
     def issue_recovery(self) -> str:
         now = _format_time(_as_utc(self.clock()))
         token = self._new_token()
@@ -168,23 +200,13 @@ class AuthService:
             )
         return token
 
-    def setup(self, token: str, password: str) -> None:
+    def setup(self, password: str) -> None:
         _validate_password(password)
         now = _format_time(_as_utc(self.clock()))
         with self.store.transaction() as connection:
             exists = connection.execute("SELECT 1 FROM admin_account WHERE singleton = 1").fetchone()
-            token_row = connection.execute(
-                "SELECT purpose, expires_at, consumed_at FROM auth_tokens WHERE token_digest = ?",
-                (_digest(token),),
-            ).fetchone()
-            if (
-                exists is not None
-                or token_row is None
-                or token_row[0] != "setup"
-                or token_row[2] is not None
-                or token_row[1] <= now
-            ):
-                raise AuthenticationError()
+            if exists is not None:
+                raise AdministratorAlreadyConfiguredError()
             verifier = _safe_hash(self.password_hasher, password)
             connection.execute(
                 "INSERT INTO admin_account (singleton, password_hash, created_at, updated_at) "
@@ -192,21 +214,22 @@ class AuthService:
                 (verifier, now, now),
             )
             connection.execute(
-                "UPDATE auth_tokens SET consumed_at = ? WHERE token_digest = ?",
-                (now, _digest(token)),
+                "DELETE FROM auth_tokens WHERE purpose = 'setup'",
             )
 
     def login(self, password: str, client_key: str) -> LoginResult:
         if self.limiter.is_limited(client_key):
-            raise AuthenticationError()
+            raise LoginRateLimitedError()
         with self.store.transaction() as connection:
             row = connection.execute(
                 "SELECT password_hash FROM admin_account WHERE singleton = 1"
             ).fetchone()
         verifier = row[0] if row is not None else None
-        if verifier is None or not _safe_verify(self.password_hasher, password, verifier):
+        if verifier is None:
+            raise AdministratorNotConfiguredError()
+        if not _safe_verify(self.password_hasher, password, verifier):
             self.limiter.record_failure(client_key)
-            raise AuthenticationError()
+            raise InvalidCredentialsError()
 
         self.limiter.clear(client_key)
         now_dt = _as_utc(self.clock())
@@ -339,22 +362,6 @@ class AuthService:
     def csrf_matches(self, session: AuthSession, token: str | None) -> bool:
         return bool(token) and hmac.compare_digest(session.csrf_digest, _digest(token))
 
-    def _issue_local_token(self, purpose: str) -> str:
-        token = self._new_token()
-        now_dt = _as_utc(self.clock())
-        now = _format_time(now_dt)
-        with self.store.transaction() as connection:
-            connection.execute(
-                "UPDATE auth_tokens SET consumed_at = ? WHERE purpose = ? AND consumed_at IS NULL",
-                (now, purpose),
-            )
-            connection.execute(
-                "INSERT INTO auth_tokens (token_digest, purpose, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?)",
-                (_digest(token), purpose, now, _format_time(now_dt + TOKEN_LIFETIME)),
-            )
-        return token
-
     def _new_token(self) -> str:
         return self.token_factory(32)
 
@@ -402,15 +409,24 @@ def validate_local_request(request: Request) -> None:
 
 
 def _validate_password(password: str) -> None:
-    if (
-        not isinstance(password, str)
-        or len(password) < 8
-        or len(password) > 256
-        or not any("A" <= character <= "Z" for character in password)
-        or not any("a" <= character <= "z" for character in password)
-        or not any("0" <= character <= "9" for character in password)
-    ):
-        raise AuthenticationError()
+    if not isinstance(password, str):
+        issues = ["a text value"]
+    else:
+        issues = []
+        if len(password) < 8:
+            issues.append("at least 8 characters")
+        if len(password) > 256:
+            issues.append("no more than 256 characters")
+        if not any("A" <= character <= "Z" for character in password):
+            issues.append("at least one uppercase letter")
+        if not any("a" <= character <= "z" for character in password):
+            issues.append("at least one lowercase letter")
+        if not any("0" <= character <= "9" for character in password):
+            issues.append("at least one digit")
+    if issues:
+        raise PasswordPolicyError(
+            "Password does not meet these requirements: " + "; ".join(issues) + "."
+        )
 
 
 def _safe_hash(hasher: object, password: str) -> str:

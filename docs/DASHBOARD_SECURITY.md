@@ -11,10 +11,11 @@ The controller does not start inference at launch. Desired state is persisted in
 
 ## Authentication and browser boundary
 
-- Initial setup and recovery use one-time local-console tokens. Passwords use Argon2id; opaque token and session values are stored as digests.
+- Initial administrator setup is password-only by explicit product choice. Administrator recovery uses one-time local-console tokens. Passwords use Argon2id; opaque recovery-token and session values are stored as digests.
 - The browser receives an HttpOnly, SameSite session cookie. CSRF state stays in memory. The API applies login throttling and generic authentication failures.
 - `/auth/state` and minimal controller liveness are the public information surface. Operational status, profiles, operations, jobs, logs, and database routes require an administrator session. Mutations require the CSRF token.
-- OpenAPI and interactive documentation routes are disabled. The frontend makes same-origin requests and does not store passwords, setup tokens, session identifiers, CSRF values, or database connection strings in browser storage.
+- OpenAPI and interactive documentation routes are disabled. The frontend makes same-origin requests and does not store passwords, recovery tokens, session identifiers, CSRF values, or database connection strings in browser storage.
+- Initial administrator setup is tokenless for local usability and accepts only loopback same-origin requests. The local operator accepts that the first local request can claim the administrator account; no setup token is issued or checked.
 - Request validation failures return a generic 422 response; they do not echo rejected input such as an oversized database connection string.
 
 ## Local storage and secrets
