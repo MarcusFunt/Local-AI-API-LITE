@@ -10,8 +10,8 @@ The implementation checks used mocked Docker and PostgreSQL adapters. No inferen
 
 | Check | Result | Evidence |
 |---|---|---|
-| Repository Python suite | Passed | `python -m pytest -q` — 182 passed on 2026-10-29. |
-| Dashboard backend suite | Passed | `python -m pytest -q dashboard/backend/tests` — 142 passed on 2026-10-29. |
+| Repository Python suite | Passed | `python -m pytest -q` — 183 passed on 2026-10-29. |
+| Dashboard backend suite | Passed | `python -m pytest -q dashboard/backend/tests` — 143 passed on 2026-10-29. |
 | Backend lint | Passed | `python -m ruff check scripts tests dashboard/backend/app dashboard/backend/tests`. |
 | Frontend tests | Passed | `npm --prefix dashboard/frontend test` — 22 passed. |
 | TypeScript | Passed | `npm --prefix dashboard/frontend run typecheck`. |

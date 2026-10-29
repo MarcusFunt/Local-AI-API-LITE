@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -180,3 +181,27 @@ def test_output_size_and_artifact_retention_are_bounded(tmp_path):
     assert len(artifacts.list_artifacts()) == 1
     assert artifacts.list_artifacts()[0].name == second_record["artifact_id"]
     assert runner.status(first_record["job_id"])["artifact_id"] is None
+
+
+def test_terminal_job_state_waits_for_activity_gate_release(tmp_path, monkeypatch):
+    _jobs, gate, _command, _artifacts, runner = make_runner(tmp_path)
+    release_started = threading.Event()
+    allow_release = threading.Event()
+    original_release = gate.release
+
+    def delayed_release(job_id):
+        release_started.set()
+        if not allow_release.wait(timeout=2):
+            raise AssertionError("test did not release the activity gate")
+        original_release(job_id)
+
+    monkeypatch.setattr(gate, "release", delayed_release)
+    created = runner.start("server-readiness", {})
+
+    assert release_started.wait(timeout=2)
+    try:
+        assert runner.status(created["job_id"])["state"] == "running"
+    finally:
+        allow_release.set()
+
+    assert wait_for_terminal(runner, created["job_id"])["state"] == "completed"

@@ -686,6 +686,7 @@ class JobRunner:
         self._lock = threading.RLock()
         self._cancel_events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._pending_finishes: dict[str, dict[str, Any]] = {}
 
     def start(self, job_id: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         spec, clean = self.registry.validate(job_id, options)
@@ -733,7 +734,12 @@ class JobRunner:
         with self._lock:
             event = self._cancel_events.get(job_id)
             thread = self._threads.get(job_id)
-            if event is None or thread is None or not thread.is_alive():
+            if (
+                event is None
+                or thread is None
+                or not thread.is_alive()
+                or job_id in self._pending_finishes
+            ):
                 return False
             event.set()
         cancel = getattr(self.command_adapter, "cancel", None)
@@ -871,8 +877,11 @@ class JobRunner:
             except Exception as exc:  # noqa: BLE001 - keep worker teardown independent.
                 _LOGGER.error("Job activity release failed (%s)", type(exc).__name__)
             with self._lock:
+                pending_finish = self._pending_finishes.pop(job_id, None)
                 self._cancel_events.pop(job_id, None)
                 self._threads.pop(job_id, None)
+            if pending_finish is not None:
+                self.store.update(job_id, **pending_finish)
 
     def _finish(
         self,
@@ -883,15 +892,15 @@ class JobRunner:
         exit_code: int | None = None,
         summary: dict[str, Any] | None = None,
     ) -> None:
-        self.store.update(
-            job_id,
-            state=state,
-            completed_at=time.time(),
-            error_category=error_category,
-            artifact_id=artifact_id,
-            exit_code=exit_code,
-            summary_json=summary or {},
-        )
+        with self._lock:
+            self._pending_finishes[job_id] = {
+                "state": state,
+                "completed_at": time.time(),
+                "error_category": error_category,
+                "artifact_id": artifact_id,
+                "exit_code": exit_code,
+                "summary_json": summary or {},
+            }
 
 
 def _sanitize_command_output(job_id: str, stdout: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
