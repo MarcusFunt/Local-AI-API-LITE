@@ -1,9 +1,9 @@
 # Retrieval inference serving design
 
-**Status:** M1/M2 worker implementations with fake-adapter validation; model installation, worker startup, and host acceptance remain pending.
+**Status:** M1/M2 worker implementations with fake-adapter validation. A local Windows host smoke acceptance passed on 2026-10-30; the built image and installed model cache remain local artifacts.
 
 **Baseline:** `main` at `b6311366df8896ce356b2dfdaf86cc6690179062` (2026-10-29).
-**Scope:** CPU embeddings (M1) and CPU reranking (M2). Host resource acceptance, retrieval-quality evaluation, and game integration remain future operator/project gates.
+**Scope:** CPU embeddings (M1) and CPU reranking (M2). Broader host resource acceptance, retrieval-quality evaluation, and game integration remain future operator/project gates.
 
 ## Deployment boundary
 
@@ -53,16 +53,20 @@ The response follows the OpenAI embeddings field subset: `object: "list"`, order
 
 For `query`, use the versioned instruction `Instruct: Given a question, retrieve relevant passages that answer the question\nQuery:` followed by the query. For `document`, encode the plain passage without a query instruction. Return the dimension, normalization, model revision, and prompt-profile version in model metadata. A change to model revision, prompt, pooling, dimension, or normalization changes the embedding fingerprint and requires callers to treat the vectors as a different index space.
 
-The model weights and tokenizer are not installed by this change. Readiness must remain 503 with sanitized `missing_artifact` when the cache is absent, while liveness stays healthy.
+Model weights are not bundled in the worker image. During the local operator acceptance recorded below, the pinned model and code snapshots were installed to an external cache and both workers reached ready. If required artifacts are absent, readiness must remain 503 with sanitized `missing_artifact` while liveness stays healthy.
 
-For a future operator-approved window, create an absolute cache directory outside the repository, copy `deploy/retrieval/.env.example` to `deploy/retrieval/.env`, and set `MODEL_CACHE_DIR` to that directory. Set `MODEL_CACHE_UID` and `MODEL_CACHE_GID` to numeric IDs that can write to the bind-mounted cache; they control only the explicit installer. For example, on Linux, set the same absolute path in the `.env` file and create it with `sudo install -d -o 10001 -g 10001 -m 0750 /absolute/path/to/retrieval-cache` when using the sample IDs. Serving workers continue to run as UID/GID 10001 and only read the cache. The explicit installer profile supports a no-write plan followed by a deliberate install of the fixed embedding, reranker, and reviewed-code artifacts:
+For an installation on another host, create an absolute cache directory outside the repository, copy `deploy/retrieval/.env.example` to `deploy/retrieval/.env`, and set `MODEL_CACHE_DIR` to that directory. Set `MODEL_CACHE_UID` and `MODEL_CACHE_GID` to numeric IDs that can write to the bind-mounted cache; they control only the explicit installer. For example, on Linux, set the same absolute path in the `.env` file and create it with `sudo install -d -o 10001 -g 10001 -m 0750 /absolute/path/to/retrieval-cache` when using the sample IDs. Serving workers continue to run as UID/GID 10001 and only read the cache. The explicit installer profile supports a no-write plan followed by a deliberate install of the fixed embedding, reranker, and reviewed-code artifacts:
 
 ```sh
 docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml --profile install run --rm model-installer --plan
 docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml --profile install run --rm model-installer --install
 ```
 
-Only after separately reviewing the cache and host budget should the operator build/start workers with `docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml up -d embed rerank`. These commands are documentation; this implementation did not run them.
+On another host, review the cache location and resource budget before building or starting workers. The command below was run for the local acceptance on 2026-10-30; those two worker containers remain running on that host by operator choice:
+
+```sh
+docker compose --env-file deploy/retrieval/.env --file deploy/retrieval/compose.yaml up -d embed rerank
+```
 
 ## M2: reranking
 
@@ -106,13 +110,22 @@ The GTE model uses custom Transformers code. The loader sets `trust_remote_code=
 
 Sentence Transformers `5.7.0` was evaluated as the initial candidate. The implementation uses the direct Transformers model/tokenizer path so Qwen's last-token pooling and offline `local_files_only` behavior are explicit, while GTE can bind its custom `code_revision`. This avoids adding unused Sentence Transformers, scikit-learn, and SciPy dependencies to the worker image. The full transitive dependency lock pins exact versions and artifact hashes. Keep model-serving dependencies inside `services/retrieval`; do not add them to the dashboard or repository-wide development requirements.
 
-Initial Compose ceilings are provisional, not measured residency budgets: embedding 4 CPUs / 5 GiB memory; reranking 2 CPUs / 4 GiB memory. Both are CPU-only. These ceilings do not establish that the pair can run resident on the target host. The 2026-10-29 host snapshot found 5.77 GiB free Windows-visible RAM and 9,904 MiB device-wide GPU allocation; neither metric approves a worker launch, and the latter is not per-process usage. Keep actual installation, startup, RSS, memory-pressure, latency, and LLM-impact checks pending for a separately authorized operator window.
+Compose ceilings are 4 CPUs / 5 GiB for embedding and 2 CPUs / 4 GiB for reranking. Both are CPU-only. The local smoke run below observed both workers resident together within these limits, but it is not a sustained memory-pressure test. The 2026-10-29 GPU allocation snapshot is device-wide and is not per-process usage.
 
 ## Automated and deferred acceptance
 
 Model-free CI injects fake adapters and checks schemas, bounds, output ordering, finite values, readiness/error sanitization, queue overload, and Compose structure. It must not download model weights or require a GPU. Compose checks must preserve root vLLM configuration, external network usage and aliases, and prove no published inference ports, GPU request, `depends_on`, or restart policy were added.
 
-Host acceptance remains separate: install artifacts explicitly, start one CPU worker at a time, measure actual startup/RSS/CPU and bounded latency, exercise real Danish queries/passages, and confirm the existing LLM remains healthy under an approved window. Retrieval quality against labeled history queries, resident-pair memory, generator impact, and any service lifecycle controls are not accepted here.
+The local operator acceptance below exercised real Danish requests and confirmed the existing LLM remained healthy. Retrieval quality against labeled history queries, sustained load, memory-pressure behavior, generator impact under actual generation, and service lifecycle controls remain unaccepted.
+
+## Local operator acceptance — 2026-10-30
+
+- Built `local-ai-api-lite-retrieval:0.1.0` from PR #7 head `4542e658658cc1d5057a3c802da1c92218726657`, which is included in merge commit `dd8273fa724fbd5d8470ac7c2b71f5b281d7cd05`. Local image ID/digest: `sha256:76b81c69aabf7cafdd41d11a6ddad2cf896ea154d53cf8898f4f67f79b5461a0` (1,600,851,438 bytes). This image was not pushed to a registry.
+- Ran the explicit installer for the pinned Qwen embedding snapshot, GTE reranker snapshot, and reviewed GTE code snapshot. The reviewed custom-code hashes passed verification. The external cache occupied 1.71 GiB across 76 files; no cache is stored in the repository.
+- Both services joined `ddu_inference_bus` on aliases `ddu-embed` and `ddu-rerank`, published no host ports, and returned HTTP 200 for `/health`, `/ready`, and `/v1/models`.
+- An ephemeral client on `ddu_inference_bus` called both real inference endpoints. A Danish embedding query returned a finite 1,024-dimensional unit vector in 0.26 seconds. A Danish reranking query over three candidate passages returned two finite, descending relevance scores with original indices in 0.12 seconds. These were one warm request per endpoint, not a benchmark or retrieval-quality evaluation.
+- After both workers were ready, `docker stats` reported 2.564 GiB for embedding (5 GiB limit) and 1.719 GiB for reranking (4 GiB limit); Windows showed 5.3 GiB free physical memory. The existing `local-ai-api-lite-vllm-1` remained healthy at 3.536 GiB, and an HTTP 200 `GET /v1/models` through `ddu-llm` returned `ddu-narrator`. No generation request or GPU benchmark was run.
+- The operator asked to leave both retrieval workers running after the smoke acceptance.
 
 The history/game backend owns source ingestion, chunking, vector storage, hybrid retrieval, citations, and gameplay. No database access, dashboard lifecycle UI, game integration, TTS, or STT is part of M0–M2.
 
