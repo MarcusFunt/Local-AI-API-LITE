@@ -182,11 +182,29 @@ def _create_worker_app(
         state: WorkerState = request.app.state.worker
         if state.status != "ready":
             return JSONResponse(status_code=503, content={"status": state.status})
+        queue: InferenceQueue = request.app.state.inference_queue
+        queue_status = queue.snapshot()
+        if queue_status["stuck_inference"]:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "degraded", "reason_category": "inference_stuck"},
+            )
+        if queue_status["saturated"]:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "degraded", "reason_category": "queue_saturated"},
+            )
         return {"status": "ready"}
 
     @app.get("/v1/models")
     async def models() -> dict[str, list[dict[str, object]]]:
         return {"data": [metadata.as_dict()]}
+
+    @app.get("/metrics")
+    async def metrics(request: Request) -> dict[str, int | bool | str | None]:
+        """Expose aggregate queue counters only; never record inference content."""
+        queue: InferenceQueue = request.app.state.inference_queue
+        return queue.snapshot()
 
     return app
 

@@ -1,0 +1,8 @@
+--index-url https://pypi.org/simple
+
+fastapi==0.162.0
+faster-whisper==1.2.1
+huggingface-hub==0.36.2
+piper-tts==1.8.0
+python-multipart
+uvicorn==0.54.0

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import TypeVar
 
 from .contracts import QueueFullError
@@ -22,35 +24,98 @@ class InferenceQueue:
         self.timeout_seconds = timeout_seconds
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="retrieval-inference")
         self._lock = asyncio.Lock()
+        self._metrics_lock = threading.Lock()
         self._outstanding = 0
+        self._active_requests = 0
+        self._accepted_total = 0
+        self._completed_total = 0
+        self._failed_total = 0
+        self._timed_out_total = 0
+        self._rejected_total = 0
+        self._stuck_inference = False
+        self._last_successful_inference_at: str | None = None
         self._closed = False
 
     @property
     def outstanding(self) -> int:
         return self._outstanding
 
+    def snapshot(self) -> dict[str, int | bool | str | None]:
+        """Return bounded aggregate queue state without request or model content."""
+        with self._metrics_lock:
+            active = self._active_requests
+            outstanding = self._outstanding
+            return {
+                "status": "available",
+                "accepted_total": self._accepted_total,
+                "completed_total": self._completed_total,
+                "failed_total": self._failed_total,
+                "timed_out_total": self._timed_out_total,
+                "rejected_total": self._rejected_total,
+                "active_requests": active,
+                "queued_requests": max(0, outstanding - active),
+                "outstanding_requests": outstanding,
+                "max_outstanding": self.max_outstanding,
+                "saturated": outstanding >= self.max_outstanding,
+                "stuck_inference": self._stuck_inference,
+                "last_successful_inference_at": self._last_successful_inference_at,
+                "closed": self._closed,
+            }
+
     async def run(self, call: Callable[[], T]) -> T:
         async with self._lock:
             if self._closed or self._outstanding >= self.max_outstanding:
+                with self._metrics_lock:
+                    self._rejected_total += 1
                 raise QueueFullError()
             self._outstanding += 1
+            with self._metrics_lock:
+                self._accepted_total += 1
 
         loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(self._executor, call)
+        started = threading.Event()
+
+        def invoke() -> T:
+            started.set()
+            with self._metrics_lock:
+                self._active_requests += 1
+            try:
+                return call()
+            finally:
+                with self._metrics_lock:
+                    self._active_requests = max(0, self._active_requests - 1)
+                    if self._active_requests == 0:
+                        self._stuck_inference = False
+
+        future = loop.run_in_executor(self._executor, invoke)
         try:
             result = await asyncio.wait_for(
                 asyncio.shield(future), timeout=self.timeout_seconds
             )
         except TimeoutError as exc:
+            with self._metrics_lock:
+                self._failed_total += 1
+                self._timed_out_total += 1
+                if started.is_set() and self._active_requests > 0:
+                    self._stuck_inference = True
             asyncio.create_task(self._release_when_done(future))
             raise TimeoutError() from exc
         except asyncio.CancelledError:
+            with self._metrics_lock:
+                self._failed_total += 1
             asyncio.create_task(self._release_when_done(future))
             raise
         except Exception:
+            with self._metrics_lock:
+                self._failed_total += 1
             await self._release()
             raise
         else:
+            with self._metrics_lock:
+                self._completed_total += 1
+                self._last_successful_inference_at = (
+                    datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+                )
             await self._release()
             return result
 

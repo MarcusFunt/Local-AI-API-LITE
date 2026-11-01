@@ -102,6 +102,21 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .section-heading { display: flex; align-items: flex-end; justify-content: space-between; margin: 28px 0 13px; }
 .section-heading h2, .panel-heading h2 { margin: 6px 0 0; color: #e3e9e4; font: 600 15px var(--display); letter-spacing: -.02em; }
 .section-note { color: #6f7b74; font: 9px var(--mono); }
+.retrieval-worker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.retrieval-worker-card { min-width: 0; padding: 18px 20px; }
+.retrieval-worker-card h3 { margin: 6px 0 0; color: #e3e9e4; font: 600 14px var(--display); }
+.retrieval-worker-details { margin-top: 11px; }
+.retrieval-worker-details .mono { overflow-wrap: anywhere; white-space: normal; }
+.retrieval-operations-section { margin-top: 25px; }
+.retrieval-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.retrieval-control-card { min-width: 0; padding: 18px 20px; }
+.retrieval-control-card h3 { margin: 6px 0 0; color: #e3e9e4; font: 600 14px var(--display); }
+.retrieval-control-details { display: grid; gap: 10px; margin: 17px 0; }
+.retrieval-control-details > div { display: grid; grid-template-columns: minmax(100px, .7fr) minmax(0, 1.3fr); gap: 10px; align-items: start; }
+.retrieval-control-details span { color: #85928a; font-size: 9px; }
+.retrieval-control-details strong { overflow-wrap: anywhere; color: #dce6df; text-align: right; font-size: 9px; }
+.retrieval-control-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.retrieval-control-actions .secondary-button { margin-top: 0; }
 .metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; }
 .metric-card { min-width: 0; min-height: 124px; padding: 15px 16px 12px; border: 1px solid #2b3430; border-radius: 9px; background: #171c1a; }
 .metric-heading { display: flex; align-items: center; justify-content: space-between; }
@@ -175,6 +190,20 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .profile-image { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 19px 12px; background: #151a17; }
 .profile-image span { color: #68766d; font: 8px var(--mono); letter-spacing: .05em; }
 .profile-image code { overflow: hidden; color: #849b8a; font: 8px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.speech-profiles-section { margin-top: 27px; }
+.speech-profile-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.speech-profile-card { padding: 18px 19px; border: 1px solid #2c3530; border-radius: 9px; background: #171c1a; }
+.speech-profile-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.speech-profile-heading h3 { margin: 6px 0 0; color: #e0e7e1; font: 600 15px var(--display); }
+.speech-profile-unverified { flex: 0 0 auto; padding: 5px 7px; border: 1px solid #504937; border-radius: 4px; color: #d4c49a; font: 8px var(--mono); letter-spacing: .04em; }
+.speech-profile-card > p { margin: 10px 0 13px; color: #7e8b83; font-size: 10px; line-height: 1.5; }
+.speech-service-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.speech-service { display: grid; gap: 7px; min-width: 0; padding: 11px; border: 1px solid #29332d; border-radius: 6px; background: #141917; }
+.speech-service strong { overflow-wrap: anywhere; color: #d8e0d9; font: 10px var(--mono); }
+.speech-service span:not(.eyebrow) { color: #85928a; font-size: 9px; }
+.speech-service code { overflow-wrap: anywhere; color: #91ad99; font: 8px var(--mono); }
+.speech-profile-limits { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.speech-profile-limits span { padding: 5px 7px; border: 1px solid #333c37; border-radius: 5px; color: #88978d; font-size: 8px; line-height: 1.4; }
 .profile-boundary { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 11px 13px; border: 1px solid #333c37; border-radius: 7px; color: #7f8e84; background: #171c1a; font-size: 10px; line-height: 1.5; }
 .boundary-icon { display: grid; place-items: center; flex: 0 0 auto; width: 14px; height: 14px; border: 1px solid #60756a; border-radius: 50%; color: #91b49c; font: 9px var(--mono); }
 .operation-panel { margin-top: 13px; padding: 19px 20px; }
@@ -248,6 +277,13 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .database-row-meta { margin-top: 8px; color: #67736b; font: 9px var(--mono); }
 .danger-button { color: #d9a9a0; }
 .database-credential { max-width: 100%; overflow: auto; padding: 9px; border: 1px solid #4c5a4e; border-radius: 4px; color: #e0c482; background: #101411; font: 10px var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.credential-reauth-scrim { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: #080b09cc; }
+.credential-reauth { display: grid; gap: 11px; width: min(100%, 440px); padding: 20px; border-color: #566c5b; box-shadow: 0 20px 80px #0009; }
+.credential-reauth h3 { margin: 0; color: #dce5de; font: 600 15px var(--display); }
+.credential-reauth p { margin: 0; color: #929e95; font-size: 11px; line-height: 1.55; }
+.credential-reauth label { color: #9da9a0; font: 9px var(--mono); }
+.credential-reauth input { width: 100%; height: 38px; padding: 0 10px; border: 1px solid #364039; border-radius: 5px; color: #d9e2dc; background: #111713; font: 11px var(--mono); }
+.credential-reauth input:focus { outline: 1px solid #70bd8c; border-color: #70bd8c; }
 .logs-actions .secondary-button, .database-list .panel-heading .secondary-button, .database-row-actions .secondary-button, .database-form-actions .secondary-button { margin-top: 0; }
 .job-confirm-box .secondary-button { margin-top: 0; }
 .job-artifact-view { margin-top: 17px; padding-top: 14px; border-top: 1px solid #29312c; }
@@ -297,6 +333,8 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 @media (max-width: 1100px) {
   .main-area { padding: 0 26px; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .retrieval-worker-grid { grid-template-columns: 1fr; }
+  .retrieval-control-grid { grid-template-columns: 1fr; }
   .observed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .operation-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .job-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -322,6 +360,8 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .metric-card { min-height: 116px; padding: 13px 12px 10px; }
   .metric-value { font-size: 16px; }
   .lower-grid, .profile-grid { grid-template-columns: 1fr; }
+  .speech-service-grid { grid-template-columns: 1fr; }
+  .speech-profile-heading { flex-direction: column; }
   .operation-controls { grid-template-columns: 1fr; }
   .job-form, .job-compare-controls { grid-template-columns: 1fr; }
   .job-history-row { grid-template-columns: 1fr; align-items: start; gap: 8px; }

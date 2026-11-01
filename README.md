@@ -46,12 +46,13 @@ docker run --rm --network ddu_inference_bus --mount "type=bind,source=$scripts,t
 
 These clients check HTTP readiness, the served alias, strict synthetic history/examiner schemas, and completion finish reasons. `--disable-thinking` applies the verified Qwen3.5 chat-template option; without it, reasoning can consume the token budget and produce an empty response. The option is model-specific. Clients print sanitized results and never print prompts, model output, or tokens. Host acceptance and measured results are recorded in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-Run CPU-only tests and configuration checks without this service:
+Set up the repository Python environment once, then run CPU-only tests and configuration checks without this service. The editable dashboard package installs its runtime dependencies, including `argon2-cffi`, into the repository virtual environment:
 
 ```powershell
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
-ruff check scripts tests
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\ruff.exe check scripts tests dashboard/backend
 docker compose config --quiet
 ```
 
@@ -66,3 +67,7 @@ docker compose config --quiet
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), [docs/API_CONTRACT.md](docs/API_CONTRACT.md), and [docs/CUTOVER_AND_ROLLBACK.md](docs/CUTOVER_AND_ROLLBACK.md) before connecting an application.
 
 The local dashboard is described in [dashboard/README.md](dashboard/README.md) and its [operator runbook](docs/DASHBOARD.md). It runs as a separate loopback-only CPU controller with authenticated status and lifecycle controls, bounded jobs, sanitized logs, and optional read-only PostgreSQL probes. Inference operations require a locally configured stable Compose project path and explicit administrator confirmation.
+
+The existing CPU retrieval workers and their independent dashboard status and controls are covered by the [M3 operational reliability runbook](docs/M3_OPERATIONAL_RELIABILITY.md), including the bounded three-stage synthetic benchmark and the host acceptance checks that remain pending.
+
+The optional, independently deployed Danish CPU speech-to-text and text-to-speech services are documented in [docs/SPEECH_SERVING.md](docs/SPEECH_SERVING.md). Their pinned profile appears separately from the narrator profiles in the dashboard.

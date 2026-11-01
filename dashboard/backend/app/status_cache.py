@@ -8,6 +8,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from .retrieval_status import unknown_retrieval_service_snapshots
+from .speech_status import unknown_speech_service_snapshots
+
 UNKNOWN_SNAPSHOT: dict[str, Any] = {
     "availability": "unavailable",
     "inference_state": "Unknown",
@@ -18,6 +21,8 @@ UNKNOWN_SNAPSHOT: dict[str, Any] = {
     "last_successful_health_probe_at": None,
     "last_failure_reason": None,
     "cache_path": None,
+    "model_services": unknown_retrieval_service_snapshots(),
+    "speech_services": unknown_speech_service_snapshots(),
     "telemetry": {
         "cpu_percent": None,
         "ram_used_bytes": None,

@@ -1,0 +1,19 @@
+{
+  "fixture_version": "synthetic-danish-model-chain-v1",
+  "synthetic": true,
+  "question": "Hvornår åbnede det fiktive observatorium Vinterlys?",
+  "passages": [
+    {
+      "id": "vinterlys-weather",
+      "text": "Vinterlys er et opdigtet teststed, hvor vejret ofte er blæsende."
+    },
+    {
+      "id": "vinterlys-answer",
+      "text": "I dette fiktive testunivers åbnede observatoriet Vinterlys i år 1842."
+    },
+    {
+      "id": "lighthouse",
+      "text": "I det opdigtede testunivers åbnede fyrtårnet Sølvholm i år 1842."
+    }
+  ]
+}

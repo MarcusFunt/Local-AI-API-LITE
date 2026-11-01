@@ -163,8 +163,17 @@ def test_dsn_is_write_only_and_never_returned(tmp_path):
     assert monitor.calls == [database_id]
     assert DATABASE_DSN not in checked.text
 
+    rejected_reveal = client.post(
+        f"/api/control/v1/databases/{database_id}/reveal",
+        json_body={"password": "IncorrectPassword9"},
+        headers=headers,
+    )
+    assert rejected_reveal.status_code == 401
+    assert REPLACEMENT_DSN not in rejected_reveal.text
+
     revealed = client.post(
         f"/api/control/v1/databases/{database_id}/reveal",
+        json_body={"password": "CorrectHorseBatteryStaple7"},
         headers=headers,
     )
     assert revealed.status_code == 200

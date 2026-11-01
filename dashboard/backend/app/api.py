@@ -21,13 +21,24 @@ from .jobs import DockerJobCommandAdapter, JobArtifactStore, JobRunner
 from .logs import DockerLogReader
 from .paths import data_directory
 from .persistence import JOB_SCHEMA, MetadataStore
-from .profiles import DEFAULT_PROFILES_PATH, load_profiles, public_profile
+from .profiles import (
+    DEFAULT_PROFILES_PATH,
+    load_profiles,
+    load_speech_profiles,
+    public_profile,
+    public_speech_profile,
+)
+from .retrieval_compose import RetrievalComposeRunner
+from .retrieval_operations import RetrievalOperationCoordinator
+from .retrieval_status import RetrievalServiceDockerReader, unknown_retrieval_service_snapshots
 from .routes.auth import router as auth_router
 from .routes.databases import router as databases_router
 from .routes.jobs import router as jobs_router
 from .routes.logs import router as logs_router
 from .routes.operations import router as operations_router
+from .routes.retrieval_operations import router as retrieval_operations_router
 from .secrets_store import AESGCMCipher, SecretsStore, WindowsDpapiProtector
+from .speech_status import SpeechServiceDockerReader, unknown_speech_service_snapshots
 from .status_cache import StatusCache
 from .telemetry import read_host_telemetry
 
@@ -114,6 +125,9 @@ def create_app(
     log_reader: Any | None = None,
     secret_store: Any | None = None,
     database_monitor: Any | None = None,
+    retrieval_status_reader: Any | None = None,
+    speech_status_reader: Any | None = None,
+    retrieval_operation_coordinator: Any | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Local-AI-API-LITE Dashboard",
@@ -128,6 +142,12 @@ def create_app(
         return JSONResponse(status_code=422, content={"detail": "Invalid request"})
 
     app.state.docker_reader = docker_reader or DockerReader(docker_path=shutil.which("docker"))
+    app.state.retrieval_status_reader = retrieval_status_reader or RetrievalServiceDockerReader(
+        docker_path=shutil.which("docker")
+    )
+    app.state.speech_status_reader = speech_status_reader or SpeechServiceDockerReader(
+        docker_path=shutil.which("docker")
+    )
     app.state.telemetry_reader = telemetry_reader or read_host_telemetry
     app.state.profiles_path = profiles_path or DEFAULT_PROFILES_PATH
     app.state.frontend_dist = frontend_dist or DEFAULT_FRONTEND_DIST
@@ -168,15 +188,31 @@ def create_app(
     class DashboardStatusReader:
         def read(self, deadline: float) -> dict[str, Any]:
             docker = docker_snapshot(deadline)
+            try:
+                retrieved = app.state.retrieval_status_reader.read(deadline=deadline)
+                model_services = list(retrieved.values()) if isinstance(retrieved, dict) else []
+                if len(model_services) != 2:
+                    model_services = unknown_retrieval_service_snapshots()
+            except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+                model_services = unknown_retrieval_service_snapshots()
+            try:
+                speech_result = app.state.speech_status_reader.read(deadline=deadline)
+                speech_services = list(speech_result.values()) if isinstance(speech_result, dict) else []
+                if len(speech_services) != 2:
+                    speech_services = unknown_speech_service_snapshots()
+            except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+                speech_services = unknown_speech_service_snapshots()
             return {
                 **docker,
                 "telemetry": telemetry_snapshot(docker.get("cache_path")),
+                "model_services": model_services,
+                "speech_services": speech_services,
             }
 
     app.state.status_cache = status_cache or StatusCache(
         DashboardStatusReader(),
         max_age=5,
-        command_budget=8,
+        command_budget=20,
     )
     runner = operation_runner or ComposeRunnerProvider(app.state.local_settings_store)
     checker = contract_checker or ComposeContractChecker(runner)
@@ -218,7 +254,19 @@ def create_app(
         )
     else:
         app.state.database_monitor = database_monitor
+    app.state.retrieval_operation_coordinator = retrieval_operation_coordinator or RetrievalOperationCoordinator(
+        app.state.local_settings_store,
+        RetrievalComposeRunner(settings=app.state.local_settings_store),
+        activity_gate,
+        store,
+    )
+    if retrieval_operation_coordinator is None:
+        try:
+            app.state.retrieval_operation_coordinator.reconcile_after_restart()
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+            pass
     app.include_router(operations_router)
+    app.include_router(retrieval_operations_router)
     app.include_router(jobs_router)
     app.include_router(logs_router)
     app.include_router(databases_router)
@@ -258,6 +306,8 @@ def create_app(
                 "last_failure_reason": snapshot.get("last_failure_reason"),
             },
             "active_profile": active_profile,
+            "model_services": snapshot.get("model_services", unknown_retrieval_service_snapshots()),
+            "speech_services": snapshot.get("speech_services", unknown_speech_service_snapshots()),
             "telemetry": snapshot.get("telemetry"),
             "status_cache": _public_cache_state(snapshot),
         }
@@ -274,11 +324,19 @@ def create_app(
     @app.get("/api/control/v1/profiles", dependencies=[Depends(require_session)])
     def profiles() -> dict[str, Any]:
         try:
-            return {"profiles": [public_profile(profile) for profile in profile_registry()]}
+            speech_profiles = load_speech_profiles(app.state.profiles_path)
+            return {
+                "profiles": [public_profile(profile) for profile in profile_registry()],
+                "speech_profiles": [public_speech_profile(profile) for profile in speech_profiles],
+            }
         except (ValueError, TypeError):
             return JSONResponse(
                 status_code=503,
-                content={"profiles": [], "message": "The dashboard profile registry is unavailable"},
+                content={
+                    "profiles": [],
+                    "speech_profiles": [],
+                    "message": "The dashboard profile registry is unavailable",
+                },
             )
 
     dist = app.state.frontend_dist

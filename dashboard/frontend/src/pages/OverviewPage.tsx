@@ -1,4 +1,4 @@
-import type { DashboardStatus, TelemetrySample } from "../api";
+import type { DashboardStatus, RetrievalWorkerMetrics, RetrievalWorkerStatus, SpeechServiceStatus, TelemetrySample } from "../api";
 
 interface OverviewPageProps {
   status: DashboardStatus | null;
@@ -36,6 +36,22 @@ function formatUptime(value: number | null): string {
   return `${seconds}s`;
 }
 
+function formatSnapshotAge(value: string | null): string {
+  if (!value) return "Unavailable";
+  const captured = Date.parse(value);
+  if (!Number.isFinite(captured)) return "Unavailable";
+  const seconds = Math.max(0, Math.floor((Date.now() - captured) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h`;
+}
+
+function formatLastInference(metrics: RetrievalWorkerMetrics | null): string {
+  if (!metrics) return "Unavailable";
+  if (metrics.last_successful_inference_at) return formatDate(metrics.last_successful_inference_at);
+  return metrics.completed_total > 0 ? "Timestamp unavailable" : "Never";
+}
+
 function MetricCard({ label, value, detail, samples, color = "mint" }: {
   label: string;
   value: string;
@@ -69,6 +85,82 @@ function StateBadge({ state }: { state: string }) {
   return <span className={`state-badge state-${key}`}><span className="state-dot" />{state}</span>;
 }
 
+function RetrievalWorkerCard({ worker, snapshotAt, stale }: {
+  worker: RetrievalWorkerStatus;
+  snapshotAt: string | null;
+  stale: boolean;
+}) {
+  const metrics = worker.metrics;
+  const container = worker.container;
+  const requestTotals = metrics
+    ? `${metrics.accepted_total} accepted · ${metrics.completed_total} completed · ${metrics.failed_total} failed`
+    : "Unavailable";
+  return (
+    <section className="panel retrieval-worker-card" aria-label={`${worker.alias} status`}>
+      <div className="panel-heading">
+        <div><span className="eyebrow">CPU RETRIEVAL WORKER</span><h3>{worker.alias}</h3></div>
+        <StateBadge state={worker.state} />
+      </div>
+      <div className="detail-list retrieval-worker-details">
+        <div><span>Model</span><strong>{worker.model_repository}</strong></div>
+        <div><span>Served alias</span><strong>{worker.model_id ?? "Unavailable"}</strong></div>
+        <div><span>Immutable revision</span><strong className="mono">{worker.model_revision ?? "Unavailable"}</strong></div>
+        <div><span>Compose project</span><strong>{worker.project_name}</strong></div>
+        <div><span>Image</span><strong className="mono">{worker.image_ref ?? "Unavailable"}</strong></div>
+        <div><span>Container</span><strong>{container?.name ?? "Unavailable"}</strong></div>
+        <div><span>Container state</span><strong>{container?.state ?? "Unavailable"}</strong></div>
+        <div><span>Container health</span><strong>{container?.health ?? "Unavailable"}</strong></div>
+        <div><span>Container CPU</span><strong>{container?.cpu_percent == null ? "Unavailable" : `${container.cpu_percent.toFixed(1)}%`}</strong></div>
+        <div><span>Container RAM</span><strong>{container?.memory_used_bytes == null ? "Unavailable" : `${formatBytes(container.memory_used_bytes)} / ${formatBytes(container.memory_limit_bytes)}`}</strong></div>
+        <div><span>Last successful readiness</span><strong>{formatDate(worker.last_successful_readiness_check_at)}</strong></div>
+        <div><span>Last successful inference</span><strong>{formatLastInference(metrics)}</strong></div>
+        <div><span>Snapshot age</span><strong>{formatSnapshotAge(snapshotAt)}{stale ? " · stale" : ""}</strong></div>
+        <div><span>Request totals</span><strong>{requestTotals}{metrics ? ` · ${metrics.timed_out_total} timed out` : ""}</strong></div>
+        <div><span>Queue</span><strong>{metrics ? `${metrics.active_requests} active · ${metrics.queued_requests} queued · ${metrics.max_outstanding} max` : "Unavailable"}</strong></div>
+        <div><span>Worker metrics</span><strong>{worker.metrics_availability === "available" ? "Available" : "Unavailable"}</strong></div>
+        {worker.last_error_category && <div><span>Last error category</span><strong>{worker.last_error_category}</strong></div>}
+      </div>
+    </section>
+  );
+}
+
+function SpeechServiceCard({ service, snapshotAt, stale }: {
+  service: SpeechServiceStatus;
+  snapshotAt: string | null;
+  stale: boolean;
+}) {
+  const metrics = service.metrics;
+  const container = service.container;
+  const requestTotals = metrics
+    ? `${metrics.accepted_total} accepted · ${metrics.completed_total} completed · ${metrics.failed_total} failed · ${metrics.timed_out_total} timed out`
+    : "Unavailable";
+  return (
+    <section className="panel retrieval-worker-card" aria-label={`${service.alias} status`}>
+      <div className="panel-heading">
+        <div><span className="eyebrow">CPU SPEECH SERVICE</span><h3>{service.alias}</h3></div>
+        <StateBadge state={service.state} />
+      </div>
+      <div className="detail-list retrieval-worker-details">
+        <div><span>Model</span><strong>{service.model_repository}</strong></div>
+        <div><span>Served model</span><strong>{service.model_id ?? "Unavailable"}</strong></div>
+        <div><span>Immutable revision</span><strong className="mono">{service.model_revision ?? "Unavailable"}</strong></div>
+        <div><span>Expected revision</span><strong className="mono">{service.expected_model_revision}</strong></div>
+        <div><span>Container</span><strong>{container?.name ?? "Unavailable"}</strong></div>
+        <div><span>Container state</span><strong>{container?.state ?? "Unavailable"}</strong></div>
+        <div><span>Container health</span><strong>{container?.health ?? "Unavailable"}</strong></div>
+        <div><span>Container CPU</span><strong>{container?.cpu_percent == null ? "Unavailable" : `${container.cpu_percent.toFixed(1)}%`}</strong></div>
+        <div><span>Container RAM</span><strong>{container?.memory_used_bytes == null ? "Unavailable" : `${formatBytes(container.memory_used_bytes)} / ${formatBytes(container.memory_limit_bytes)}`}</strong></div>
+        <div><span>Last successful readiness</span><strong>{formatDate(service.last_successful_readiness_check_at)}</strong></div>
+        <div><span>Last successful inference</span><strong>{formatLastInference(metrics)}</strong></div>
+        <div><span>Snapshot age</span><strong>{formatSnapshotAge(snapshotAt)}{stale ? " · stale" : ""}</strong></div>
+        <div><span>Request totals</span><strong>{requestTotals}</strong></div>
+        <div><span>Queue</span><strong>{metrics ? `${metrics.active_requests} active · ${metrics.queued_requests} queued · ${metrics.max_outstanding} max` : "Unavailable"}</strong></div>
+        {service.last_error_category && <div><span>Last error category</span><strong>{service.last_error_category}</strong></div>}
+      </div>
+    </section>
+  );
+}
+
 export function OverviewPage({ status, samples }: OverviewPageProps) {
   if (!status) return <div className="loading-state"><span className="loading-line" />Waiting for the local controller…</div>;
 
@@ -90,6 +182,26 @@ export function OverviewPage({ status, samples }: OverviewPageProps) {
         <div className="hero-orbit hero-orbit-one" aria-hidden="true" /><div className="hero-orbit hero-orbit-two" aria-hidden="true" />
       </section>
       {inference.last_failure_reason && <div className="alert-row" role="status"><span className="alert-symbol">!</span><div><strong>Service attention</strong><span>{inference.last_failure_reason}</span></div></div>}
+      <div className="section-heading"><div><span className="eyebrow">INDEPENDENT CPU SERVICES</span><h2>Retrieval workers</h2></div><span className="section-note">Readiness and identity are checked separately from narrator status</span></div>
+      <div className="retrieval-worker-grid">
+        {(status.model_services ?? []).map((worker) => <RetrievalWorkerCard
+          key={worker.service}
+          worker={worker}
+          snapshotAt={worker.observed_at}
+          stale={status.status_cache.stale}
+        />)}
+        {(status.model_services ?? []).length === 0 && <div className="empty-state panel">Retrieval worker status is unavailable.</div>}
+      </div>
+      <div className="section-heading"><div><span className="eyebrow">INDEPENDENT CPU SERVICES</span><h2>Speech workers</h2></div><span className="section-note">Container health, pinned voice/model identity, queue and resource snapshots</span></div>
+      <div className="retrieval-worker-grid">
+        {(status.speech_services ?? []).map((service) => <SpeechServiceCard
+          key={service.service}
+          service={service}
+          snapshotAt={service.observed_at}
+          stale={status.status_cache.stale}
+        />)}
+        {(status.speech_services ?? []).length === 0 && <div className="empty-state panel">Speech worker status is unavailable.</div>}
+      </div>
       <div className="section-heading"><div><span className="eyebrow">HOST TELEMETRY</span><h2>Resource snapshot</h2></div><span className="section-note">Metrics refresh while this page is visible</span></div>
       <div className="metrics-grid">
         <MetricCard color="mint" detail="Host processor" label="CPU UTILIZATION" samples={samples.map((sample) => sample.cpuPercent)} value={telemetry.cpu_percent === null ? "Unavailable" : `${telemetry.cpu_percent.toFixed(1)}%`} />
@@ -102,11 +214,14 @@ export function OverviewPage({ status, samples }: OverviewPageProps) {
           <div className="panel-heading"><div><span className="eyebrow">INFERENCE CONTAINER</span><h2>Service details</h2></div><StateBadge state={inference.container?.health ?? "Unavailable"} /></div>
           <div className="detail-list">
             <div><span>Container</span><strong>{inference.container?.name ?? "Not found"}</strong></div>
+            <div><span>Container state</span><strong>{inference.container?.state ?? "Unavailable"}</strong></div>
             <div><span>Active profile</span><strong>{profile?.name ?? "Unrecognized / unavailable"}</strong></div>
+            <div><span>Model revision</span><strong className="mono">{inference.configuration?.model_revision ?? "Unavailable"}</strong></div>
             <div><span>Uptime</span><strong>{formatUptime(inference.container?.uptime_seconds ?? null)}</strong></div>
             <div><span>Container CPU</span><strong>{inference.container?.cpu_percent == null ? "Unavailable" : `${inference.container.cpu_percent.toFixed(1)}%`}</strong></div>
             <div><span>Container RAM</span><strong>{inference.container?.memory_used_bytes == null ? "Unavailable" : `${formatBytes(inference.container.memory_used_bytes)} / ${formatBytes(inference.container.memory_limit_bytes)}`}</strong></div>
             <div><span>Most recent healthy probe</span><strong>{formatDate(inference.last_successful_health_probe_at)}</strong></div>
+            <div><span>Status snapshot age</span><strong>{formatSnapshotAge(status.status_cache.observed_at)}{status.status_cache.stale ? " · stale" : ""}</strong></div>
             <div><span>Cache disk free</span><strong>{formatBytes(telemetry.cache_disk_free_bytes)}</strong></div>
           </div>
         </section>

@@ -194,6 +194,67 @@ def test_unsupported_model_alias_is_rejected_without_echoing_the_model_value():
     assert adapter.embedded == []
 
 
+def test_metrics_endpoint_reports_aggregate_queue_health_without_request_content():
+    adapter = FakeEmbeddingAdapter()
+    app = create_embedding_app(adapter_factory=lambda: adapter)
+    sentinel = "private-query-must-not-appear-in-metrics"
+
+    with TestClient(app) as client:
+        wait_until_ready(client)
+        inference = client.post(
+            "/v1/embeddings",
+            json={"model": "ddu-embed", "input": sentinel, "input_type": "query"},
+        )
+        metrics = client.get("/metrics")
+
+    assert inference.status_code == 200
+    assert metrics.status_code == 200
+    payload = metrics.json()
+    assert payload["status"] == "available"
+    assert payload["accepted_total"] == 1
+    assert payload["completed_total"] == 1
+    assert payload["failed_total"] == 0
+    assert payload["active_requests"] == 0
+    assert payload["queued_requests"] == 0
+    assert payload["max_outstanding"] == 2
+    assert payload["stuck_inference"] is False
+    assert isinstance(payload["last_successful_inference_at"], str)
+    assert sentinel not in metrics.text
+
+
+def test_readiness_degrades_while_timed_out_model_thread_is_still_running():
+    adapter = FakeEmbeddingAdapter()
+    app = create_embedding_app(adapter_factory=lambda: adapter, inference_timeout_seconds=0.02)
+    started = threading.Event()
+    release = threading.Event()
+    original_embed = adapter.embed
+
+    def blocked_embed(inputs: list[str], *, input_type: str) -> list[list[float]]:
+        started.set()
+        release.wait(timeout=2)
+        return original_embed(inputs, input_type=input_type)
+
+    adapter.embed = blocked_embed
+    try:
+        with TestClient(app) as client:
+            wait_until_ready(client)
+            response = client.post(
+                "/v1/embeddings",
+                json={"model": "ddu-embed", "input": "bounded call", "input_type": "query"},
+            )
+            assert started.wait(timeout=1)
+            ready = client.get("/ready")
+            metrics = client.get("/metrics").json()
+
+        assert response.status_code == 504
+        assert ready.status_code == 503
+        assert ready.json() == {"status": "degraded", "reason_category": "inference_stuck"}
+        assert metrics["stuck_inference"] is True
+        assert metrics["active_requests"] == 1
+    finally:
+        release.set()
+
+
 def test_batch_over_limit_is_rejected_before_embedding():
     adapter = FakeEmbeddingAdapter()
     app = create_embedding_app(adapter_factory=lambda: adapter)

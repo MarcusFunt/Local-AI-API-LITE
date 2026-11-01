@@ -263,7 +263,7 @@ class LocalSettingsStore:
             configured = raw.get("compose_root") if isinstance(raw, dict) else None
             if (
                 not isinstance(raw, dict)
-                or raw.get("version") != 1
+                or raw.get("version") not in {1, 2}
                 or not isinstance(configured, str)
                 or not configured
                 or not Path(configured).is_absolute()
@@ -272,6 +272,24 @@ class LocalSettingsStore:
             root = validate_compose_root(Path(configured))
             return root
         except (OSError, ValueError, TypeError, ConfigurationError):
+            return None
+
+    def load_retrieval_compose_root(self) -> Path | None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            configured = raw.get("retrieval_compose_root") if isinstance(raw, dict) else None
+            if (
+                not isinstance(raw, dict)
+                or raw.get("version") != 2
+                or not isinstance(configured, str)
+                or not configured
+                or not Path(configured).is_absolute()
+            ):
+                return None
+            from .retrieval_compose import validate_retrieval_compose_root
+
+            return validate_retrieval_compose_root(Path(configured))
+        except (OSError, ValueError, TypeError, ConfigurationError, RuntimeError):
             return None
 
     def controls_available(self) -> bool:
@@ -292,19 +310,42 @@ class LocalSettingsStore:
                 raise ConfigurationError(str(exc)) from exc
         else:
             validate_configuration(root)
-        self._write_settings(root)
+        self._write_settings("compose_root", root)
         return root
 
-    def _write_settings(self, root: Path) -> None:
+    def configure_retrieval_compose_root(self, project_root: Path) -> Path:
+        from .retrieval_compose import RetrievalComposeError, validate_retrieval_compose_root
+
+        try:
+            root = validate_retrieval_compose_root(project_root)
+        except RetrievalComposeError as exc:
+            raise ConfigurationError(str(exc)) from exc
+        self._write_settings("retrieval_compose_root", root)
+        return root
+
+    def _write_settings(self, setting: str, root: Path) -> None:
+        if setting not in {"compose_root", "retrieval_compose_root"}:
+            raise ConfigurationError("Dashboard settings key is invalid")
         temporary: Path | None = None
         try:
+            content: dict[str, str | int] = {"version": 2}
+            try:
+                existing = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict) and existing.get("version") in {1, 2}:
+                    for key in ("compose_root", "retrieval_compose_root"):
+                        value = existing.get(key)
+                        if isinstance(value, str) and value and Path(value).is_absolute():
+                            content[key] = value
+            except (OSError, ValueError, TypeError):
+                pass
+            content[setting] = str(root)
             ensure_private_directory(self.path.parent)
             descriptor, name = tempfile.mkstemp(prefix=".settings.", suffix=".tmp", dir=self.path.parent)
             temporary = Path(name)
             os.close(descriptor)
             ensure_private_file(temporary)
             temporary.write_text(
-                json.dumps({"version": 1, "compose_root": str(root)}, indent=2) + "\n",
+                json.dumps(content, indent=2) + "\n",
                 encoding="utf-8",
             )
             ensure_private_file(temporary)

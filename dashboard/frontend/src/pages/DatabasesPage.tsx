@@ -15,6 +15,10 @@ export function DatabasesPage({ csrfToken }: { csrfToken: string }) {
   const [dsn, setDsn] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [reauthDatabaseId, setReauthDatabaseId] = useState<string | null>(null);
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthError, setReauthError] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,14 +124,35 @@ export function DatabasesPage({ csrfToken }: { csrfToken: string }) {
     }
   };
 
-  const reveal = async (databaseId: string) => {
+  const beginReveal = (databaseId: string) => {
     setError(null);
-    setRevealed((current) => ({ ...current, [databaseId]: "" }));
+    setRevealed({});
+    setReauthDatabaseId(databaseId);
+    setReauthPassword("");
+    setReauthError(null);
+  };
+
+  const cancelReveal = () => {
+    setReauthDatabaseId(null);
+    setReauthPassword("");
+    setReauthError(null);
+  };
+
+  const reveal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!reauthDatabaseId || !reauthPassword) return;
+    setRevealing(true);
+    setReauthError(null);
     try {
-      const result = await revealDatabaseCredential(databaseId, csrfToken);
-      setRevealed((current) => ({ ...current, [databaseId]: result.credential }));
+      const result = await revealDatabaseCredential(reauthDatabaseId, csrfToken, reauthPassword);
+      setRevealed({ [reauthDatabaseId]: result.credential });
+      setReauthDatabaseId(null);
+      setReauthPassword("");
     } catch {
-      setError("Credential reveal is unavailable. Try again after signing in.");
+      setReauthPassword("");
+      setReauthError("Password verification failed or credential reveal is unavailable. Try again.");
+    } finally {
+      setRevealing(false);
     }
   };
 
@@ -142,6 +167,33 @@ export function DatabasesPage({ csrfToken }: { csrfToken: string }) {
       <p className="database-disclosure">{configurationMessage(state)} Database probes run separately from inference status and never provision accounts or schemas.</p>
       {error && <div className="connection-alert" role="alert">{error}</div>}
       {notice && <div className="database-notice" role="status">{notice}</div>}
+      {reauthDatabaseId && <div className="credential-reauth-scrim">
+        <form
+          aria-labelledby="credential-reauth-title"
+          aria-modal="true"
+          className="credential-reauth panel"
+          onSubmit={(event) => void reveal(event)}
+          role="dialog"
+        >
+          <div className="panel-heading"><div><div className="eyebrow">FRESH AUTHENTICATION</div><h3 id="credential-reauth-title">Confirm password to reveal credential</h3></div></div>
+          <p>Enter the current administrator password. It is checked for this reveal request and is not saved.</p>
+          <label htmlFor="credential-reauth-password">Administrator password</label>
+          <input
+            autoComplete="current-password"
+            autoFocus
+            id="credential-reauth-password"
+            onChange={(event) => setReauthPassword(event.target.value)}
+            required
+            type="password"
+            value={reauthPassword}
+          />
+          {reauthError && <div className="settings-error" role="alert">{reauthError}</div>}
+          <div className="database-form-actions">
+            <button className="secondary-button" disabled={revealing} onClick={cancelReveal} type="button">Cancel</button>
+            <button className="primary-button" disabled={revealing || !reauthPassword} type="submit">{revealing ? "Verifying…" : "Reveal credential"}</button>
+          </div>
+        </form>
+      </div>}
 
       <div className="database-layout">
         <form className="database-form panel" onSubmit={(event) => void submit(event)}>
@@ -179,7 +231,7 @@ export function DatabasesPage({ csrfToken }: { csrfToken: string }) {
               <div className="database-row-meta">Last check: {database.checked_at ?? "Never"}</div>
               <div className="database-row-actions">
                 <button className="secondary-button" disabled={loading} onClick={() => void runCheck(database)} type="button">Check now</button>
-                <button className="secondary-button" onClick={() => revealed[database.database_id] ? setRevealed((current) => ({ ...current, [database.database_id]: "" })) : void reveal(database.database_id)} type="button">
+                <button className="secondary-button" onClick={() => revealed[database.database_id] ? setRevealed((current) => ({ ...current, [database.database_id]: "" })) : beginReveal(database.database_id)} type="button">
                   {revealed[database.database_id] ? "Hide credential" : "Reveal credential"}
                 </button>
                 <button className="secondary-button" onClick={() => startEdit(database)} type="button">Edit settings</button>

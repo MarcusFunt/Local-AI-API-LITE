@@ -44,6 +44,36 @@ export interface Profile {
   description: string;
 }
 
+export interface SpeechProfile {
+  id: string;
+  name: string;
+  language: string;
+  stt_alias: "ddu-stt";
+  stt_model_id: string;
+  stt_model_revision: string;
+  stt_runtime: string;
+  stt_license: string;
+  tts_alias: "ddu-tts";
+  tts_model_id: string;
+  tts_model_revision: string;
+  tts_voice_id: string;
+  tts_runtime: string;
+  tts_runtime_license: string;
+  tts_voice_dataset_license: string;
+  compose_project: string;
+  compose_profile: string;
+  cpu_only: boolean;
+  stt_cpu_limit: number;
+  stt_memory_limit: string;
+  tts_cpu_limit: number;
+  tts_memory_limit: string;
+  max_audio_seconds: number;
+  max_audio_bytes: number;
+  max_text_characters: number;
+  validation_state: string;
+  description: string;
+}
+
 export type DesiredInferenceState = "running" | "stopped";
 
 export interface OperationRecord {
@@ -162,6 +192,96 @@ export interface ContainerStatus {
   host_published_ports: string[];
 }
 
+export interface RetrievalWorkerMetrics {
+  accepted_total: number;
+  completed_total: number;
+  failed_total: number;
+  timed_out_total: number;
+  rejected_total: number;
+  active_requests: number;
+  queued_requests: number;
+  outstanding_requests: number;
+  max_outstanding: number;
+  saturated: boolean;
+  stuck_inference: boolean;
+  last_successful_inference_at: string | null;
+}
+
+export type RetrievalWorkerState =
+  | "Ready"
+  | "Stopped"
+  | "Starting/Loading"
+  | "Degraded"
+  | "Unknown/Unavailable";
+
+export interface RetrievalWorkerStatus {
+  service: "embed" | "rerank";
+  alias: "ddu-embed" | "ddu-rerank";
+  project_name: string;
+  state: RetrievalWorkerState;
+  availability: "available" | "unavailable";
+  container: ContainerStatus | null;
+  image_ref: string | null;
+  image_id: string | null;
+  model_id: string | null;
+  model_revision: string | null;
+  expected_model_id: string;
+  expected_model_revision: string;
+  model_repository: string;
+  last_successful_readiness_check_at: string | null;
+  last_error_category: string | null;
+  metrics: RetrievalWorkerMetrics | null;
+  metrics_availability: "available" | "unavailable";
+  observed_at: string | null;
+}
+
+export interface SpeechServiceStatus {
+  service: "stt" | "tts";
+  alias: "ddu-stt" | "ddu-tts";
+  project_name: string;
+  state: RetrievalWorkerState;
+  availability: "available" | "unavailable";
+  container: ContainerStatus | null;
+  image_ref: string | null;
+  image_id: string | null;
+  model_id: string | null;
+  model_revision: string | null;
+  expected_model_id: string;
+  expected_model_revision: string;
+  model_repository: string;
+  last_successful_readiness_check_at: string | null;
+  last_error_category: string | null;
+  metrics: RetrievalWorkerMetrics | null;
+  metrics_availability: "available" | "unavailable";
+  observed_at: string | null;
+}
+
+export type RetrievalServiceName = "embed" | "rerank";
+export type RetrievalLifecycleAction = "start" | "stop" | "restart";
+
+export interface RetrievalOperationRecord {
+  operation_id: string;
+  service: RetrievalServiceName;
+  action: RetrievalLifecycleAction;
+  phase: string;
+  started_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  outcome_category: string | null;
+  actor_id_hash: string | null;
+  recovery_state: Record<string, unknown>;
+}
+
+export interface RetrievalOperationStateSnapshot {
+  configured: boolean;
+  services: Record<RetrievalServiceName, {
+    desired_state: "running" | "stopped";
+    latest_operation: RetrievalOperationRecord | null;
+  }>;
+  latest_operation: RetrievalOperationRecord | null;
+  activity: { operation_id: string; kind: string; lease_until: number | null; status: string } | null;
+}
+
 export interface DashboardStatus {
   refreshed_at: string;
   controller: { state: string };
@@ -175,6 +295,8 @@ export interface DashboardStatus {
     last_failure_reason: string | null;
   };
   active_profile: Profile | null;
+  model_services: RetrievalWorkerStatus[];
+  speech_services: SpeechServiceStatus[];
   telemetry: Telemetry;
   status_cache: {
     observed_at: string | null;
@@ -216,8 +338,8 @@ export function getStatus(): Promise<DashboardStatus> {
   return getJson<DashboardStatus>("/api/control/v1/status");
 }
 
-export function getProfiles(): Promise<{ profiles: Profile[] }> {
-  return getJson<{ profiles: Profile[] }>("/api/control/v1/profiles");
+export function getProfiles(): Promise<{ profiles: Profile[]; speech_profiles: SpeechProfile[] }> {
+  return getJson<{ profiles: Profile[]; speech_profiles: SpeechProfile[] }>("/api/control/v1/profiles");
 }
 
 export function getLogs(tail = 100): Promise<LogsResponse> {
@@ -283,19 +405,21 @@ export function deleteDatabase(databaseId: string, csrfToken: string): Promise<v
 export function revealDatabaseCredential(
   databaseId: string,
   csrfToken: string,
+  password: string,
 ): Promise<{ credential: string }> {
   return databaseMutation(
     `/api/control/v1/databases/${encodeURIComponent(databaseId)}/reveal`,
     "POST",
     csrfToken,
+    { password },
   );
 }
 
-async function postOperation(
+async function postOperation<T>(
   path: string,
   csrfToken: string,
-  body?: { profile_id: string },
-): Promise<OperationRecord> {
+  body?: Record<string, string | boolean>,
+): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -310,7 +434,7 @@ async function postOperation(
     signal: AbortSignal.timeout(11 * 60 * 1000),
   });
   if (!response.ok) throw new ApiRequestError(response.status);
-  return (await response.json()) as OperationRecord;
+  return (await response.json()) as T;
 }
 
 export function getOperationState(): Promise<OperationStateSnapshot> {
@@ -318,19 +442,35 @@ export function getOperationState(): Promise<OperationStateSnapshot> {
 }
 
 export function startInference(profileId: string, csrfToken: string): Promise<OperationRecord> {
-  return postOperation("/api/control/v1/operations/start", csrfToken, { profile_id: profileId });
+  return postOperation<OperationRecord>("/api/control/v1/operations/start", csrfToken, { profile_id: profileId });
 }
 
 export function stopInference(csrfToken: string): Promise<OperationRecord> {
-  return postOperation("/api/control/v1/operations/stop", csrfToken);
+  return postOperation<OperationRecord>("/api/control/v1/operations/stop", csrfToken);
 }
 
 export function restartInference(csrfToken: string): Promise<OperationRecord> {
-  return postOperation("/api/control/v1/operations/restart", csrfToken);
+  return postOperation<OperationRecord>("/api/control/v1/operations/restart", csrfToken);
 }
 
 export function applyProfile(profileId: string, csrfToken: string): Promise<OperationRecord> {
-  return postOperation("/api/control/v1/operations/apply-profile", csrfToken, { profile_id: profileId });
+  return postOperation<OperationRecord>("/api/control/v1/operations/apply-profile", csrfToken, { profile_id: profileId });
+}
+
+export function getRetrievalOperationState(): Promise<RetrievalOperationStateSnapshot> {
+  return getJson<RetrievalOperationStateSnapshot>("/api/control/v1/retrieval-operations/state");
+}
+
+export function operateRetrievalService(
+  service: RetrievalServiceName,
+  action: RetrievalLifecycleAction,
+  csrfToken: string,
+): Promise<RetrievalOperationRecord> {
+  return postOperation<RetrievalOperationRecord>(
+    `/api/control/v1/retrieval-operations/${service}/${action}`,
+    csrfToken,
+    { confirm: true },
+  );
 }
 
 export async function startJob(
