@@ -253,7 +253,7 @@ Expected: Both commands exit successfully; speech has no host-published port and
 
 - [ ] **Step 3: Install the reviewed pinned English artifact and rebuild the speech image**
 
-Run from `deploy/speech`: `docker compose --profile install run --rm model-installer --plan`, then `docker compose --profile install run --rm model-installer --install`, followed by `docker compose --profile danish-speech build stt tts`.
+Run from `deploy/speech`: `docker compose --profile install build model-installer`, then `docker compose --profile install run --rm model-installer --plan`, `docker compose --profile install run --rm model-installer --install`, and finally `docker compose --profile danish-speech build stt tts`. Build the installer first so the plan and install commands execute the reviewed installer code rather than a stale cached image.
 
 Expected: The plan prints the exact STT/Piper revisions and both voice IDs; install writes only the pinned Danish/English voice files and manifest; speech image builds successfully. The source terms and pin are already documented by Task 4 before the download occurs.
 
