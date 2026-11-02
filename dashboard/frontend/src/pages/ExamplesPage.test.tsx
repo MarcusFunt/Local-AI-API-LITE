@@ -390,8 +390,8 @@ describe("ExamplesPage", () => {
   it("uses the selected fixed preset for a multi-turn chat and displays timing", async () => {
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
-    fireEvent.change(screen.getByRole("slider", { name: "Speed ↔ Quality" }), { target: { value: "2" } });
-    expect(screen.getByText("Quality", { selector: "output" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Quality" }));
+    expect((screen.getByRole("radio", { name: "Quality" }) as HTMLInputElement).checked).toBe(true);
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Compare two ideas" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -405,6 +405,104 @@ describe("ExamplesPage", () => {
       [{ role: "user", content: "Compare two ideas" }],
     ]);
     expect(screen.getByText(/does not guarantee correctness/i)).toBeTruthy();
+  });
+
+  it.each([
+    ["da", "Fast", "fast"],
+    ["da", "Balanced", "balanced"],
+    ["da", "Quality", "quality"],
+    ["en", "Fast", "fast"],
+    ["en", "Balanced", "balanced"],
+    ["en", "Quality", "quality"],
+  ])("keeps %s language and %s depth through an edited voice turn", async (language, label, preset) => {
+    installRecorder();
+    installAudioUrls();
+    apiMocks.transcribeAudio.mockResolvedValue({ text: "Draft transcript" });
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Language" }), { target: { value: language } });
+    const depth = screen.getByRole("radiogroup", { name: "Response depth" });
+    expect(within(depth).getAllByRole("radio")).toHaveLength(3);
+    expect((within(depth).getByRole("radio", { name: "Balanced" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(depth).getByRole("radio", { name: label }));
+    expect((within(depth).getByRole("radio", { name: label }) as HTMLInputElement).checked).toBe(true);
+    const dock = screen.getByRole("region", { name: "Message and voice composer" });
+    fireEvent.click(within(dock).getByRole("checkbox", { name: "Speak replies automatically" }));
+    const push = within(dock).getByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    const composer = within(dock).getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(composer.value).toBe("Draft transcript"));
+    expect(composer.disabled).toBe(false);
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledWith("csrf-value", expect.any(Blob), language, expect.any(AbortSignal));
+    expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
+    fireEvent.change(composer, { target: { value: "Reviewed transcript" } });
+    fireEvent.click(within(dock).getByRole("button", { name: "Send message" }));
+    await screen.findByLabelText("Spoken reply audio");
+    expect(apiMocks.sendChatTurn).toHaveBeenCalledWith("csrf-value", language, preset, [{ role: "user", content: "Reviewed transcript" }], expect.any(AbortSignal));
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", language, expect.any(AbortSignal));
+  });
+
+  it("times only active capture and announces transcription politely after release", async () => {
+    const { getUserMedia, stream } = installRecorder();
+    let allowMicrophone!: (stream: unknown) => void;
+    let finishTranscription!: (transcript: { text: string }) => void;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
+    apiMocks.transcribeAudio.mockImplementationOnce(() => new Promise((resolve) => { finishTranscription = resolve; }));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Push to talk" });
+    vi.useFakeTimers();
+    fireEvent.pointerDown(push);
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(screen.queryByRole("timer")).toBeNull();
+    await act(async () => { allowMicrophone(stream); });
+    const status = screen.getByRole("status", { name: "Voice input status" });
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toMatch(/recording/i);
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:03" }).getAttribute("aria-live")).toBe("off");
+    fireEvent.pointerUp(push);
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(status.textContent).toMatch(/transcribing/i);
+    await act(async () => { finishTranscription({ text: "Ready for review" }); });
+    expect(status.textContent).toMatch(/ready to record/i);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(screen.queryByRole("timer")).toBeNull();
+    await act(async () => { fireEvent.pointerDown(push); });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    fireEvent.pointerCancel(push);
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(status.textContent).toMatch(/ready to record/i);
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([" ", "Enter"])("records while holding %j and ends capture on key release", async (key) => {
+    installRecorder();
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Push to talk" });
+    fireEvent.keyDown(push, { key });
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    fireEvent.keyUp(push, { key });
+    await screen.findByRole("button", { name: "Push to talk" });
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Escape", "blur", "pointercancel"])("returns recording to idle and discards audio on %s", async (action) => {
+    installRecorder();
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    if (action === "Escape") fireEvent.keyDown(window, { key: "Escape" });
+    else if (action === "blur") fireEvent.blur(push);
+    else fireEvent.pointerCancel(window);
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toMatch(/ready to record/i);
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
 
   it("restores a failed prompt to the composer so retry does not include an unanswered turn", async () => {

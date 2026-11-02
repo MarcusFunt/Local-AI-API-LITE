@@ -116,6 +116,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const [chatElapsedMs, setChatElapsedMs] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+  const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [transcriptReady, setTranscriptReady] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
@@ -266,6 +268,12 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     const timer = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timer);
   }, [chatStartedAt]);
+
+  useEffect(() => {
+    if (!recording || recordingStartedAt === null) return undefined;
+    const timer = window.setInterval(() => setRecordingElapsedMs(Math.max(0, Date.now() - recordingStartedAt)), 1000);
+    return () => window.clearInterval(timer);
+  }, [recording, recordingStartedAt]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -548,6 +556,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         setVoiceError("Recording ended unexpectedly. Check microphone access and try again.");
       };
       recorder.start();
+      setRecordingStartedAt(Date.now());
+      setRecordingElapsedMs(0);
       setRecording(true);
       stopTimerRef.current = window.setTimeout(stopRecording, MAX_RECORDING_MS);
     } catch {
@@ -675,6 +685,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         <button className="text-button" type="button" onClick={clearConversation} disabled={messages.length === 0 && !draft && !transcribing && !recording}>Clear session</button>
       </div>
 
+      <div className="chat-settings">
       <div className="language-control">
         <label htmlFor="example-language">Language</label>
         <select id="example-language" value={language} onChange={(event) => setLanguage(event.currentTarget.value as ExampleLanguage)}>
@@ -684,21 +695,17 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         <span>Chat, transcription, and spoken replies</span>
       </div>
 
-      <div className="preset-control">
-        <div className="preset-heading"><label htmlFor="example-preset">Speed ↔ Quality</label><output htmlFor="example-preset">{preset[0].toUpperCase() + preset.slice(1)}</output></div>
-        <input
-          id="example-preset"
-          aria-label="Speed ↔ Quality"
-          type="range"
-          min="0"
-          max="2"
-          step="1"
-          value={CHAT_PRESETS.indexOf(preset)}
-          onChange={(event) => setPreset(CHAT_PRESETS[Number(event.currentTarget.value)])}
-        />
-        <div className="preset-stop-labels" aria-hidden="true"><span>Fast</span><span>Balanced</span><span>Quality</span></div>
-        <p>{PRESET_COPY[preset]}</p>
+      <fieldset className="preset-control" role="radiogroup" aria-describedby="preset-description">
+        <legend>Response depth</legend>
+        <div className="preset-options">
+          {CHAT_PRESETS.map((choice) => <label className="preset-option" key={choice}>
+            <input type="radio" name="example-preset" value={choice} checked={preset === choice} onChange={() => setPreset(choice)} />
+            <span>{choice[0].toUpperCase() + choice.slice(1)}</span>
+          </label>)}
+        </div>
+        <p id="preset-description">{PRESET_COPY[preset]}</p>
         <p className="preset-disclaimer">This setting changes latency and answer depth. It does not guarantee correctness.</p>
+      </fieldset>
       </div>
 
       <div className="conversation-log" aria-live="polite" aria-label="Conversation">
@@ -756,6 +763,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         />
       </div>}
 
+      <section className="composer-dock" aria-label="Message and voice composer">
       <form className="example-composer" onSubmit={(event) => void submitMessage(event)}>
         <label htmlFor="example-message">Message</label>
         {transcriptReady && <p className="transcript-hint" role="status">Transcript ready. Review and edit it here before sending.</p>}
@@ -781,6 +789,11 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
       <div className="voice-controls">
         <div className="voice-control-copy"><strong>Turn-based {language === "da" ? "Danish" : "English"} voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
+        <div className={`recording-state${recording ? " recording-state-active" : ""}`}>
+          {recording && <span className="recording-dot" aria-hidden="true" />}
+          <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : transcribing ? "Transcribing speech…" : voiceReady ? "Ready to record" : "Voice unavailable"}</span>
+          {recording && <span role="timer" aria-label={`Recording elapsed time ${formatElapsed(recordingElapsedMs)}`} aria-live="off">{formatElapsed(recordingElapsedMs)} / 02:00</span>}
+        </div>
         <button
           className={`secondary-button push-to-talk ${recording ? "push-to-talk-recording" : ""}`}
           type="button"
@@ -807,6 +820,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         {window.isSecureContext === false && window.location.hostname.endsWith(".ts.net") && <> <a href={`https://${window.location.host}${window.location.pathname}${window.location.search}`}>Open the Tailscale HTTPS page</a></>}
       </p>}
       {voiceNotice && <p className="example-notice" role="status">{voiceNotice}</p>}
+      </section>
     </section>}
 
     {status?.state === "ready" && !voiceReady && <p className="example-voice-note">Chat is ready while push-to-talk and spoken replies wait for both ddu-stt and ddu-tts.</p>}
