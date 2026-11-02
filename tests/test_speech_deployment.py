@@ -77,4 +77,7 @@ def test_speech_profile_and_worker_constants_share_the_same_pinned_artifacts():
     assert profile["tts_alias"] == contracts.TTS_ALIAS
     assert profile["tts_model_id"] == contracts.TTS_MODEL_ID
     assert profile["tts_model_revision"] == contracts.TTS_MODEL_REVISION
-    assert profile["tts_voice_id"] == contracts.TTS_VOICE_ID
+    assert contracts.TTS_VOICE_IDS == {"da": "da_DK-talesyntese-medium", "en": "en_US-ljspeech-medium"}
+    assert profile["tts_voice_id"] == "; ".join(
+        f"{language}: {voice_id}" for language, voice_id in contracts.TTS_VOICE_IDS.items()
+    )

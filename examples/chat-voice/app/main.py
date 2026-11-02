@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import threading
+from typing import cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,6 +14,7 @@ from starlette.datastructures import UploadFile
 
 from .chat import ChatRequest, ChatService
 from .errors import ServiceError
+from .languages import SUPPORTED_LANGUAGES, Language
 from .speech import ALLOWED_AUDIO_TYPES, MAX_AUDIO_BYTES, SpeechService
 
 CHAT_BODY_LIMIT = 512_000
@@ -23,6 +25,7 @@ SYNTH_BODY_LIMIT = 64_000
 class SynthesizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    language: Language
     text: str = Field(min_length=1, max_length=4000)
 
 
@@ -166,12 +169,18 @@ def create_app(
             form = await request.form()
         except Exception:  # noqa: BLE001 - parser exceptions must not echo uploaded content.
             raise HTTPException(status_code=400, detail="Audio upload is invalid") from None
-        items = list(form.multi_items())
-        if len(items) != 1 or items[0][0] != "file" or not isinstance(items[0][1], UploadFile):
-            await form.close()
-            raise HTTPException(status_code=400, detail="Audio upload is invalid")
-        upload = items[0][1]
         try:
+            items = list(form.multi_items())
+            upload = form.get("file")
+            language = form.get("language")
+            if (
+                len(items) != 2
+                or {name for name, _value in items} != {"file", "language"}
+                or not isinstance(upload, UploadFile)
+                or not isinstance(language, str)
+                or language not in SUPPORTED_LANGUAGES
+            ):
+                raise HTTPException(status_code=422, detail="Invalid request")
             content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
             if content_type not in ALLOWED_AUDIO_TYPES:
                 raise HTTPException(status_code=415, detail="Audio format is not supported")
@@ -179,18 +188,18 @@ def create_app(
             if len(audio) > MAX_AUDIO_BYTES:
                 raise HTTPException(status_code=413, detail="Audio upload is too large")
             try:
-                return app.state.speech_service.transcribe(audio, content_type)
+                return app.state.speech_service.transcribe(audio, content_type, cast(Language, language))
             except ServiceError as exc:
                 raise public_error(exc) from None
             except Exception:  # noqa: BLE001 - never return adapter or upstream details.
                 raise HTTPException(status_code=503, detail="The speech service is unavailable") from None
         finally:
-            await upload.close()
+            await form.close()
 
     @app.post("/api/synthesize")
     def synthesize(body: SynthesizeRequest, _authorized: None = Depends(require_token)):
         try:
-            audio, media_type = app.state.speech_service.synthesize(body.text)
+            audio, media_type = app.state.speech_service.synthesize(body.text, body.language)
             return Response(content=audio, media_type=media_type)
         except ServiceError as exc:
             raise public_error(exc) from None

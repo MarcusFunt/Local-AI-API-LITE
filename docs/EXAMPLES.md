@@ -14,6 +14,12 @@ Open **Examples** in the dashboard and select **Start** on the Chat + Voice card
 
 The app stops after 30 minutes without a proxied app request. Chat, transcription, and synthesis requests extend the idle deadline. Reloading the dashboard does not start the app again. After a controller restart, the per-run credential is gone; if the old container is still present, the dashboard requires recovery. Use **Stop**, wait for the card to report **Stopped**, then start a new session. If Docker cannot confirm the container has stopped, the activity reservation remains held and the card reports recovery required.
 
+## Language
+
+Use **Language** to choose Danish (`da`) or English (`en`) for chat, transcription, and spoken replies. The same selection instructs the narrator's reply language, selects the transcription language, and chooses the matching fixed TTS voice. Danish is the initial choice after every page reload; the selection stays in page memory only.
+
+Changing the language preserves the current conversation and composer. The next chat turn or recording uses the new selection. An action already in progress keeps the language captured when it started, including automatic speech for that chat reply. Manually speaking an existing reply uses the current selection. The selector does not start or reconfigure inference services.
+
 ## Chat and speed/quality presets
 
 The slider has three fixed stops that select request presets for the same currently served narrator model:
@@ -30,7 +36,7 @@ The selected preset changes the request's output budget and thinking mode, which
 
 ## Turn-based voice
 
-When both speech dependencies are ready, press and hold the microphone control to record a Danish utterance. Recording ends when you release, cancel, leave the page, or reach the 120-second limit. The fixed speech service transcribes the recording. The transcript is appended to any existing composer text; review and edit it, then explicitly send it as a chat turn. The assistant reply can optionally be synthesized with the fixed Danish voice and played in the page.
+When both speech dependencies are ready, choose Danish or English and press and hold the microphone control to record an utterance in that language. Recording ends when you release, cancel, leave the page, or reach the 120-second limit. The fixed speech service transcribes the recording in its captured language. The transcript is appended to any existing composer text; review and edit it, then explicitly send it as a chat turn. The assistant reply can optionally be synthesized with the matching fixed Danish talesyntese or English LJSpeech voice and played in the page. The exact pins, artifact layout, and separate voice dataset terms are documented in [SPEECH_SERVING.md](SPEECH_SERVING.md).
 
 The consumer validates each uploaded file by decoding its audio stream before forwarding it to STT. It rejects unsupported/invalid audio, files over 25 MB, and decoded duration over 120 seconds.
 

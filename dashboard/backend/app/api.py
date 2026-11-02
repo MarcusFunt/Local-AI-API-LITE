@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .auth import AuthService, require_session
@@ -381,6 +381,11 @@ def create_app(
 
     dist = app.state.frontend_dist
     if (dist / "index.html").is_file():
+        @app.get("/examples", include_in_schema=False)
+        @app.get("/examples/chat-voice", include_in_schema=False)
+        def example_spa_entry() -> FileResponse:
+            return FileResponse(dist / "index.html")
+
         app.mount("/", StaticFiles(directory=dist, html=True), name="dashboard")
     else:
 

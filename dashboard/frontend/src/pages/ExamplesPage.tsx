@@ -11,6 +11,7 @@ import {
 import type {
   ExampleChatMessage,
   ExampleChatPreset,
+  ExampleLanguage,
   ExamplePublicStatus,
   ExampleState,
 } from "../api";
@@ -88,9 +89,12 @@ function DependencyRow({ title, detail, state }: { title: string; detail: string
   </div>;
 }
 
-export function ExamplesPage({ csrfToken, onSessionExpired }: {
+export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWorkspace, onReturnToCatalog }: {
   csrfToken: string;
   onSessionExpired: () => void;
+  workspace: boolean;
+  onOpenWorkspace: () => void;
+  onReturnToCatalog: () => void;
 }) {
   const [status, setStatus] = useState<ExamplePublicStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,6 +103,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [preset, setPreset] = useState<ExampleChatPreset>("balanced");
+  const [language, setLanguage] = useState<ExampleLanguage>("da");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -127,6 +132,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const messageIdRef = useRef(0);
+  const openWorkspaceOnReadyRef = useRef(false);
+  const statusRequestIdRef = useRef(0);
 
   const setAudio = useCallback((nextUrl: string | null) => {
     if (audioUrlRef.current && audioUrlRef.current !== nextUrl) {
@@ -137,19 +144,19 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   }, []);
 
   const refresh = useCallback(async (): Promise<ExamplePublicStatus | null> => {
+    const requestId = ++statusRequestIdRef.current;
     setStatusError(null);
     try {
       const examples = await getExamples();
       const next = examples[0] ?? null;
-      if (mountedRef.current) {
-        setStatus(next);
-        setStatusError(null);
-        setLoading(false);
-      }
+      if (!mountedRef.current || requestId !== statusRequestIdRef.current) return null;
+      setStatus(next);
+      setStatusError(null);
+      setLoading(false);
       return next;
     } catch (cause) {
       if (apiStatus(cause) === 401) onSessionExpired();
-      if (mountedRef.current) {
+      if (mountedRef.current && requestId === statusRequestIdRef.current) {
         setStatusError("Example status is unavailable. Try refreshing the page status.");
         setLoading(false);
       }
@@ -239,6 +246,16 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   }, [refresh, status]);
 
   useEffect(() => {
+    if (!openWorkspaceOnReadyRef.current || !status) return;
+    if (status.state === "ready") {
+      openWorkspaceOnReadyRef.current = false;
+      if (!workspace) onOpenWorkspace();
+    } else if (["failed", "recovery-required", "stopped", "stopping"].includes(status.state)) {
+      openWorkspaceOnReadyRef.current = false;
+    }
+  }, [onOpenWorkspace, status, workspace]);
+
+  useEffect(() => {
     if (chatStartedAt === null) return undefined;
     const updateElapsed = () => setChatElapsedMs(Math.max(0, Date.now() - chatStartedAt));
     const timer = window.setInterval(updateElapsed, 1000);
@@ -298,17 +315,21 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
 
   const start = async () => {
     if (pendingAction || status?.chat_dependency.state !== "ready") return;
+    // Observations requested before this lifecycle action must not overwrite it.
+    statusRequestIdRef.current++;
     setPendingAction("start");
     setError(null);
     setNotice(null);
     try {
       const next = await startExample(csrfToken);
+      openWorkspaceOnReadyRef.current = !workspace;
       setStatus(next);
       setMessages([]);
       setDraft("");
       setTranscriptReady(false);
       await refresh();
     } catch (cause) {
+      openWorkspaceOnReadyRef.current = false;
       const current = await refresh();
       setError(handleError(cause, "start"));
       if (current?.state === "recovery-required") setError("The controller needs to confirm the example container is stopped before retrying.");
@@ -319,6 +340,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
 
   const stop = async () => {
     if (pendingAction) return;
+    statusRequestIdRef.current++;
+    openWorkspaceOnReadyRef.current = false;
     cancelRecording(false);
     abortRequests();
     setMessages([]);
@@ -365,6 +388,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     event.preventDefault();
     const content = draft.trim();
     if (!content || !canChat) return;
+    const requestLanguage = language;
     const previousMessages = messages;
     const history: ExampleChatMessage[] = [
       ...messages.slice(-15).map(({ role, content: messageContent }) => ({ role, content: messageContent })),
@@ -383,7 +407,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     setChatStartedAt(Date.now());
     setChatElapsedMs(0);
     try {
-      const reply = await sendChatTurn(csrfToken, preset, history, controller.signal);
+      const reply = await sendChatTurn(csrfToken, requestLanguage, preset, history, controller.signal);
       const assistantMessage: ConversationMessage = {
         id: ++messageIdRef.current,
         role: "assistant",
@@ -393,7 +417,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       if (mountedRef.current && !controller.signal.aborted && activeChatRef.current === activeRequest) {
         setMessages((previous) => [...previous.slice(-15), assistantMessage]);
         if (speakReplies && voiceReady && reply.text.length <= MAX_TTS_CHARACTERS) {
-          void speak(reply.text, assistantMessage.id, true);
+          void speak(reply.text, assistantMessage.id, requestLanguage, true);
         }
       }
     } catch (cause) {
@@ -421,7 +445,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     setNotice("Stopped waiting. Your message is back in the composer. The local model may finish this request in the background.");
   };
 
-  const transcribe = useCallback(async (audio: Blob) => {
+  const transcribe = useCallback(async (audio: Blob, recordingLanguage: ExampleLanguage) => {
     if (!audio.size || audio.size > MAX_AUDIO_BYTES) {
       setVoiceError(audio.size > MAX_AUDIO_BYTES ? "Recording exceeded the 25 MB audio limit." : "No audio was recorded. Hold to talk and try again.");
       return;
@@ -432,7 +456,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     const controller = new AbortController();
     transcribeAbortRef.current = controller;
     try {
-      const result = await transcribeAudio(csrfToken, audio, controller.signal);
+      const result = await transcribeAudio(csrfToken, audio, recordingLanguage, controller.signal);
       if (!mountedRef.current || controller.signal.aborted) return;
       if (!result.text.trim()) {
         setDraft("");
@@ -476,10 +500,16 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
 
   const beginRecording = async () => {
     if (!canUseVoice || pointerHeldRef.current) return;
+    const recordingLanguage = language;
     pointerHeldRef.current = true;
     setVoiceError(null);
     setVoiceNotice(null);
     try {
+      if (window.isSecureContext === false) {
+        pointerHeldRef.current = false;
+        setVoiceError("Microphone recording requires HTTPS. Open this page from the Tailscale HTTPS address and allow microphone access in your browser's site settings.");
+        return;
+      }
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
         pointerHeldRef.current = false;
         setVoiceError("This browser does not support push-to-talk audio recording.");
@@ -506,7 +536,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
         cancelStopRef.current = false;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         chunksRef.current = [];
-        if (!wasCancelled && mountedRef.current) void transcribe(blob);
+        if (!wasCancelled && mountedRef.current) void transcribe(blob, recordingLanguage);
       };
       recorder.onerror = () => {
         cancelRecording(false);
@@ -519,18 +549,18 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       pointerHeldRef.current = false;
       releaseTracks();
       setRecording(false);
-      setVoiceError("Microphone access was denied. Check browser permissions and try again.");
+      setVoiceError("Microphone access was denied. Allow microphone access for this site in your browser settings, then try again.");
     }
   };
 
-  const speak = useCallback(async (text: string, messageId: number, autoplay = false) => {
+  const speak = useCallback(async (text: string, messageId: number, speechLanguage: ExampleLanguage, autoplay = false) => {
     if (!voiceReady || text.length > MAX_TTS_CHARACTERS || synthesizing !== null) return;
     setSynthesizing(messageId);
     setVoiceError(null);
     const controller = new AbortController();
     synthAbortRef.current = controller;
     try {
-      const audio = await synthesizeReply(csrfToken, text, controller.signal);
+      const audio = await synthesizeReply(csrfToken, text, speechLanguage, controller.signal);
       if (!mountedRef.current || controller.signal.aborted) return;
       setAudio(URL.createObjectURL(audio));
       setPlayAudioOnLoad(autoplay);
@@ -574,23 +604,28 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     }
   };
 
-  return <div className="page-content examples-content">
-    <section className="intro-panel examples-intro">
+  return <div className={`page-content examples-content${workspace ? " example-workspace" : ""}`}>
+    {workspace && <a className="workspace-return" href="/examples" onClick={(event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      onReturnToCatalog();
+    }}>Return to Examples</a>}
+    {!workspace && <section className="intro-panel examples-intro">
       <span className="eyebrow">ONE LOCAL HANDS-ON EXAMPLE</span>
       <h2>Try real tasks with your local model</h2>
       <p>Chat stays in this browser session. Push-to-talk is turn based: record, review the transcript, then send it with the conversation.</p>
-    </section>
+    </section>}
 
     <section className="panel example-card" aria-labelledby="example-title">
       <div className="example-card-heading">
-        <div><span className="eyebrow">EXAMPLE 01</span><h2 id="example-title">Chat + Voice</h2></div>
+        <div><span className="eyebrow">{workspace ? "LOCAL WORKSPACE" : "EXAMPLE 01"}</span>{workspace ? <h1 id="example-title">Chat + Voice</h1> : <h2 id="example-title">Chat + Voice</h2>}</div>
         {status ? <StateBadge state={status.state} /> : <span className="state-badge state-unknown">Loading</span>}
       </div>
       <p className="example-summary">{statusSummary}</p>
-      <div className="example-dependencies">
+      {!workspace && <div className="example-dependencies">
         <DependencyRow title="Chat model" detail={chatDependencyDetail} state={status?.chat_dependency.state ?? "unknown"} />
         <DependencyRow title="Speech services" detail={voiceDependencyDetail} state={status?.voice_dependency.state ?? "unknown"} />
-      </div>
+      </div>}
       {status?.state === "ready" && <div className="example-idle-note">Idle stop: {formatDate(status.idle_expires_at)} · Stops after 30 minutes without app requests.</div>}
       {status?.started_at && status.state !== "stopped" && <div className="example-started-note">Started {formatDate(status.started_at)}</div>}
       {status && !status.activity_available && status.state !== "ready" && <div className="example-started-note">Another dashboard activity is active. Finish it before starting this example.</div>}
@@ -599,6 +634,11 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       {notice && <p className="example-notice" role="status">{notice}</p>}
       {status?.last_error_category && <p className="example-error" role="status">{FAILURE_COPY[status.last_error_category] ?? "The example needs recovery. Refresh status before retrying."}</p>}
       <div className="example-actions">
+        {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          onOpenWorkspace();
+        }}>Open Chat + Voice</a>}
         <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
           {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
         </button>
@@ -615,6 +655,15 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       <div className="chat-panel-heading">
         <div><span className="eyebrow">IN-MEMORY CONVERSATION</span><h2 id="conversation-title">Chat with ddu-narrator</h2></div>
         <button className="text-button" type="button" onClick={clearConversation} disabled={messages.length === 0 && !draft && !transcribing && !recording}>Clear session</button>
+      </div>
+
+      <div className="language-control">
+        <label htmlFor="example-language">Language</label>
+        <select id="example-language" value={language} onChange={(event) => setLanguage(event.currentTarget.value as ExampleLanguage)}>
+          <option value="da">Danish</option>
+          <option value="en">English</option>
+        </select>
+        <span>Chat, transcription, and spoken replies</span>
       </div>
 
       <div className="preset-control">
@@ -646,7 +695,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
                 className="text-button"
                 type="button"
                 disabled={!voiceReady || message.content.length > MAX_TTS_CHARACTERS || synthesizing === message.id}
-                onClick={() => void speak(message.content, message.id, true)}
+                onClick={() => void speak(message.content, message.id, language, true)}
               >{synthesizing === message.id ? "Preparing audio…" : "Speak reply"}</button>
               {message.content.length > MAX_TTS_CHARACTERS && <span>Reply exceeds the 4,000 character speech limit.</span>}
             </div>}
@@ -700,7 +749,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       </form>
 
       <div className="voice-controls">
-        <div className="voice-control-copy"><strong>Turn-based Danish voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
+        <div className="voice-control-copy"><strong>Turn-based {language === "da" ? "Danish" : "English"} voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
         <button
           className={`secondary-button push-to-talk ${recording ? "push-to-talk-recording" : ""}`}
           type="button"
@@ -722,7 +771,10 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
         >{transcribing ? "Transcribing…" : recording ? "Release to transcribe" : "Hold to talk"}</button>
         <label className="speak-replies-toggle"><input type="checkbox" checked={speakReplies} onChange={(event) => setSpeakReplies(event.currentTarget.checked)} disabled={!voiceReady} /> Speak replies automatically</label>
       </div>
-      {voiceError && <p className="example-error" role="alert">{voiceError}</p>}
+      {voiceError && <p className="example-error" role="alert">
+        {voiceError}
+        {window.isSecureContext === false && window.location.hostname.endsWith(".ts.net") && <> <a href={`https://${window.location.host}${window.location.pathname}${window.location.search}`}>Open the Tailscale HTTPS page</a></>}
+      </p>}
       {voiceNotice && <p className="example-notice" role="status">{voiceNotice}</p>}
     </section>}
 

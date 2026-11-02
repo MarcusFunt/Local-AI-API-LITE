@@ -21,11 +21,11 @@ from .contracts import (
     MAX_TTS_REQUEST_BYTES,
     STT_ALIAS,
     TTS_ALIAS,
-    TTS_VOICE_ID,
     AudioTooLongError,
     MissingArtifactError,
     QueueFullError,
     SpeechError,
+    SpeechLanguage,
     SpeechRequest,
 )
 from .models import STT_METADATA, TTS_METADATA, create_stt_adapter, create_tts_adapter
@@ -210,13 +210,11 @@ def create_stt_app(
         request: Request,
         file: UploadFile = File(...),  # noqa: B008 - FastAPI uses this to declare multipart input.
         model: str = Form(STT_ALIAS),
-        language: str = Form("da"),
+        language: SpeechLanguage = Form(...),  # noqa: B008 - FastAPI uses this to declare multipart input.
         response_format: Literal["json", "verbose_json", "text"] = Form("json"),
     ) -> Response | dict[str, Any]:
         if model != STT_ALIAS:
             raise SpeechError(422, "unsupported_model", "Model alias is not supported.")
-        if language not in {"da", "da-DK"}:
-            raise SpeechError(422, "unsupported_language", "Language is not supported.")
         audio_size = file.size
         if audio_size is None:
             file.file.seek(0, 2)
@@ -237,12 +235,12 @@ def create_stt_app(
                 raise SpeechError(413, "audio_duration_limit", "Audio exceeds the duration limit.") from None
             except InvalidAudioError:
                 raise SpeechError(400, "invalid_audio", "Audio file is empty or invalid.") from None
-            result = state.adapter.transcribe(audio, language="da")
+            result = state.adapter.transcribe(audio, language=language)
             if not isinstance(result, dict) or not isinstance(result.get("text"), str):
                 raise SpeechError(500, "invalid_model_output", "Speech model returned invalid output.")
             if len(result["text"]) > 32_000:
                 raise SpeechError(500, "invalid_model_output", "Speech model returned invalid output.")
-            result.setdefault("language", "da")
+            result.setdefault("language", language)
             result.setdefault("duration", duration)
             result.setdefault("segments", [])
             return result
@@ -288,8 +286,6 @@ def create_tts_app(
     async def speech(payload: SpeechRequest, request: Request) -> Response:
         if payload.model != TTS_ALIAS:
             raise SpeechError(422, "unsupported_model", "Model alias is not supported.")
-        if payload.voice != TTS_VOICE_ID:
-            raise SpeechError(422, "unsupported_voice", "Voice is not supported.")
         if not payload.input.strip():
             raise SpeechError(422, "invalid_input", "Input text must not be empty.")
         state: WorkerState = request.app.state.worker
@@ -298,7 +294,7 @@ def create_tts_app(
 
         try:
             wav_bytes = await request.app.state.inference_queue.run(
-                lambda: state.adapter.synthesize_wav(payload.input)
+                lambda: state.adapter.synthesize_wav(payload.input, language=payload.language)
             )
         except QueueFullError:
             raise SpeechError(429, "capacity", "Speech service capacity is full.") from None

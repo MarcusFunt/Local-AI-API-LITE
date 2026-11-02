@@ -10,6 +10,7 @@ from app.paths import ensure_private_directory
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 INSTALL_SCRIPT = REPOSITORY_ROOT / "dashboard" / "scripts" / "install_dashboard.ps1"
+SERVER_MODULE = REPOSITORY_ROOT / "dashboard" / "backend" / "app" / "local_server.py"
 UNINSTALL_SCRIPT = REPOSITORY_ROOT / "dashboard" / "scripts" / "uninstall_dashboard.ps1"
 TASK_NAME = "Local-AI-API-LITE Dashboard Controller"
 
@@ -30,9 +31,12 @@ def test_install_script_registers_interactive_logon_restart_task():
 
 def test_install_script_binds_only_loopback_and_does_not_start_inference():
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    server = SERVER_MODULE.read_text(encoding="utf-8")
 
-    assert "--host 127.0.0.1 --port 8765" in script
-    assert "0.0.0.0" not in script
+    assert "-Argument '-m app.local_server'" in script
+    assert 'host="127.0.0.1"' in server
+    assert "port=8765" in server
+    assert "0.0.0.0" not in script + server
     assert "docker compose" not in script.casefold()
     assert "compose up" not in script.casefold()
     assert "setup token" not in script.casefold()

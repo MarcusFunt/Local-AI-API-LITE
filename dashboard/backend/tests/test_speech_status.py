@@ -107,6 +107,23 @@ def test_ready_speech_service_exposes_revision_resources_checks_and_counters():
     assert result["observed_at"] == "2026-10-31T10:02:00Z"
 
 
+def test_tts_worker_with_approved_bilingual_revision_is_ready():
+    module = load_dashboard_module("speech_status")
+    spec = module.SERVICE_SPECS["tts"]
+    revision = "375a0fe641dea077c2a47b4e9a056d6da521eed3"
+    reader = _reader("tts", probe=_probe(spec, revision=revision))
+
+    result = reader.read_service("tts")
+
+    assert result["state"] == "Ready"
+    assert result["model_revision"] == revision
+    assert result["expected_model_revision"] == revision
+    assert result["model_repository"] == (
+        "rhasspy/piper-voices · da: da_DK-talesyntese-medium; en: en_US-ljspeech-medium"
+    )
+    assert result["last_error_category"] is None
+
+
 def test_speech_worker_revision_mismatch_is_degraded():
     module = load_dashboard_module("speech_status")
     spec = module.SERVICE_SPECS["tts"]

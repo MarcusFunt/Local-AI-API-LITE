@@ -32,6 +32,7 @@ class ChatMessage(BaseModel):
 class ChatTurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    language: Literal["da", "en"]
     preset: Literal["fast", "balanced", "quality"]
     messages: list[ChatMessage] = Field(min_length=1, max_length=16)
 
@@ -48,6 +49,7 @@ class SynthesizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     text: str = Field(min_length=1, max_length=4000)
+    language: Literal["da", "en"]
 
 
 class ExampleProxyError(RuntimeError):
@@ -166,6 +168,7 @@ class ExampleProxy:
 
     def chat(self, request: ChatTurnRequest) -> dict[str, object]:
         payload = {
+            "language": request.language,
             "preset": request.preset,
             "messages": [message.model_dump(mode="json") for message in request.messages],
         }
@@ -193,12 +196,12 @@ class ExampleProxy:
                 result["usage"] = safe_usage
         return result
 
-    def transcribe(self, audio: bytes, content_type: str) -> dict[str, str]:
+    def transcribe(self, audio: bytes, content_type: str, language: Literal["da", "en"]) -> dict[str, str]:
         if not audio or len(audio) > self._max_audio_bytes:
             raise ExampleProxyError(413 if len(audio) > self._max_audio_bytes else 422, "Audio upload is invalid")
         if content_type not in ALLOWED_AUDIO_TYPES:
             raise ExampleProxyError(415, "Audio format is not supported")
-        response = self._post_multipart(audio, content_type)
+        response = self._post_multipart(audio, content_type, language)
         if not isinstance(response, dict) or not isinstance(response.get("text"), str):
             raise ExampleProxyError(502, "The speech service returned an invalid response")
         text = response["text"]
@@ -212,7 +215,7 @@ class ExampleProxy:
         body = self._request(
             "POST",
             "/api/synthesize",
-            json={"text": request.text},
+            json={"text": request.text, "language": request.language},
             response_limit=SYNTHESIS_RESPONSE_LIMIT,
             accept="audio/wav",
         )
@@ -231,11 +234,14 @@ class ExampleProxy:
             raise ExampleProxyError(502, "The example service returned an invalid response")
         return result
 
-    def _post_multipart(self, audio: bytes, content_type: str) -> dict:
+    def _post_multipart(self, audio: bytes, content_type: str, language: Literal["da", "en"]) -> dict:
         response = self._request(
             "POST",
             "/api/transcribe",
-            files={"file": ("recording", audio, content_type)},
+            files={
+                "file": ("recording", audio, content_type),
+                "language": (None, language),
+            },
             response_limit=TRANSCRIPT_RESPONSE_LIMIT,
         )
         try:

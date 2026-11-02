@@ -90,7 +90,7 @@ Request example:
 }
 ```
 
-Return records containing original `index` and finite `relevance_score`, ordered by descending score and then ascending original index for ties. Include the fixed alias and model revision; never echo documents. Scores are ranking signals and are not calibrated probabilities or comparable across model changes.
+Return records containing original `index` and finite `relevance_score`, ordered by descending score and then ascending original index for ties. Include the fixed alias and model revision; never echo documents. `GET /v1/models` also reports the pinned custom implementation as `capabilities.code_revision`, alongside `score_semantics: raw_ranking_signal`, so clients can fail closed on either model or code drift. Scores are ranking signals and are not calibrated probabilities or comparable across model changes.
 
 The JSON response uses `model`, `revision`, `results` (each result has `index` and `relevance_score`), and `usage` (`prompt_tokens`, `total_tokens`). Token usage is the sum of query/document pair token counts and does not include model-internal special-token accounting beyond the tokenizer's pair encoding.
 

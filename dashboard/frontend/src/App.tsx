@@ -16,6 +16,22 @@ import { startDashboardPolling } from "./polling";
 
 type PageName = "Overview" | "Models" | "Benchmarks" | "Logs" | "Databases" | "Examples" | "Settings";
 
+const EXAMPLES_PATH = "/examples";
+const WORKSPACE_PATH = "/examples/chat-voice";
+const DASHBOARD_PAGES: PageName[] = ["Overview", "Models", "Benchmarks", "Logs", "Databases", "Settings"];
+
+function readNavigation(): { page: PageName; workspace: boolean } {
+  const path = window.location.pathname;
+  if (path === EXAMPLES_PATH || path === WORKSPACE_PATH) {
+    return { page: "Examples", workspace: path === WORKSPACE_PATH };
+  }
+  const savedPage: unknown = window.history.state?.dashboardPage;
+  return {
+    page: DASHBOARD_PAGES.includes(savedPage as PageName) ? savedPage as PageName : "Overview",
+    workspace: false,
+  };
+}
+
 const SAMPLE_LIMIT = 120;
 const VISIBLE_POLL_MS = 5000;
 const HIDDEN_POLL_MS = 30000;
@@ -164,23 +180,44 @@ function AuthenticatedDashboard({
   onPasswordChanged: () => void;
   onSessionExpired: () => void;
 }) {
-  const [page, setPage] = useState<PageName>("Overview");
+  const [{ page, workspace }, setNavigation] = useState(readNavigation);
   const { status, profiles, speechProfiles, samples, error } = useDashboard(onSessionExpired);
   const statusText = useMemo(() => status?.inference.state ?? "Unknown", [status]);
 
+  useEffect(() => {
+    // Preserve the current dashboard selection when returning through browser history.
+    window.history.replaceState({ ...window.history.state, dashboardPage: page }, "");
+    const restoreNavigation = () => setNavigation(readNavigation());
+    window.addEventListener("popstate", restoreNavigation);
+    return () => window.removeEventListener("popstate", restoreNavigation);
+  }, []);
+
+  const navigate = (nextPage: PageName, nextWorkspace = false) => {
+    if (nextPage === page && nextWorkspace === workspace) return;
+    const path = nextPage === "Examples" ? nextWorkspace ? WORKSPACE_PATH : EXAMPLES_PATH : "/";
+    window.history.pushState({ dashboardPage: nextPage }, "", path);
+    setNavigation(readNavigation());
+  };
+
   return (
-    <div className="app-shell">
-      <Sidebar page={page} onNavigate={setPage} onLogout={onLogout} />
+    <div className={`app-shell${workspace ? " app-shell-workspace" : ""}`}>
+      <Sidebar page={page} onNavigate={navigate} onLogout={onLogout} />
       <main className="main-area">
         <Topbar page={page} status={status} />
         {error && <div className="connection-alert" role="alert"><span className="alert-symbol">!</span><div><strong>Controller connection issue</strong><span>{error}. The last successful snapshot remains on screen.</span></div></div>}
-        {page !== "Settings" && <div className="page-state-line"><span className="eyebrow">INFERENCE STATE</span><StateBadge state={statusText} /><span className="controller-indicator"><span />CONTROLLER {status?.controller.state.toUpperCase() ?? "CONNECTING"}</span></div>}
+        {page !== "Settings" && !workspace && <div className="page-state-line"><span className="eyebrow">INFERENCE STATE</span><StateBadge state={statusText} /><span className="controller-indicator"><span />CONTROLLER {status?.controller.state.toUpperCase() ?? "CONNECTING"}</span></div>}
         {page === "Overview" && <OverviewPage status={status} samples={samples} />}
         {page === "Models" && <ModelsPage status={status} profiles={profiles} speechProfiles={speechProfiles} csrfToken={authState.csrfToken} />}
         {page === "Benchmarks" && <BenchmarksPage csrfToken={authState.csrfToken} />}
         {page === "Logs" && <LogsPage />}
         {page === "Databases" && <DatabasesPage csrfToken={authState.csrfToken} />}
-        {page === "Examples" && <ExamplesPage csrfToken={authState.csrfToken} onSessionExpired={onSessionExpired} />}
+        {page === "Examples" && <ExamplesPage
+          csrfToken={authState.csrfToken}
+          onSessionExpired={onSessionExpired}
+          workspace={workspace}
+          onOpenWorkspace={() => navigate("Examples", true)}
+          onReturnToCatalog={() => navigate("Examples")}
+        />}
         {page === "Settings" && <SettingsPage
           authClient={authClient}
           csrfToken={authState.csrfToken}

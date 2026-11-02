@@ -2,7 +2,7 @@ version: 1
 examples:
   - id: chat-voice
     name: Chat + Voice
-    description: Try the local narrator with text chat and optional turn-based Danish voice.
+    description: Choose Danish or English for chat, transcription, and spoken replies. The selector resets to Danish on reload.
     compose:
       project: local-ai-api-lite-examples
       file: ../../examples/compose.yaml

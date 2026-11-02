@@ -11,13 +11,13 @@ import av
 import httpx
 
 from .errors import ServiceError
+from .languages import Language
 
 LOGGER = logging.getLogger("chat_voice.speech")
 STT_URL = "http://ddu-stt:8080/v1/audio/transcriptions"
 TTS_URL = "http://ddu-tts:8080/v1/audio/speech"
 STT_MODEL = "ddu-stt"
 TTS_MODEL = "ddu-tts"
-TTS_VOICE = "da_DK-talesyntese-medium"
 MAX_AUDIO_BYTES = 25_000_000
 MAX_AUDIO_SECONDS = 120
 MAX_AUDIO_FRAMES = 60_000
@@ -40,7 +40,7 @@ class SpeechService:
         self.timeout = timeout or httpx.Timeout(connect=3, read=45, write=20, pool=3)
         self._capacity = threading.BoundedSemaphore(1)
 
-    def transcribe(self, audio: bytes, content_type: str) -> dict[str, str]:
+    def transcribe(self, audio: bytes, content_type: str, language: Language) -> dict[str, str]:
         if not audio:
             raise ServiceError(422, "audio_empty")
         if len(audio) > MAX_AUDIO_BYTES:
@@ -56,7 +56,7 @@ class SpeechService:
                 client.stream(
                     "POST",
                     STT_URL,
-                    data={"model": STT_MODEL, "language": "da", "response_format": "json"},
+                    data={"model": STT_MODEL, "language": language, "response_format": "json"},
                     files={"file": ("recording", audio, content_type)},
                     headers={"Accept-Encoding": "identity"},
                 ) as response,
@@ -73,7 +73,7 @@ class SpeechService:
             transcript = data.get("text") if isinstance(data, dict) else None
             if not isinstance(transcript, str) or len(transcript) > MAX_TRANSCRIPT_CHARACTERS:
                 raise ServiceError(502, "speech_invalid_response")
-            LOGGER.info("transcription completed model=%s language=da", STT_MODEL)
+            LOGGER.info("transcription completed model=%s language=%s", STT_MODEL, language)
             return {"text": transcript}
         except ServiceError as exc:
             LOGGER.warning("transcription failed category=%s", exc.category)
@@ -90,7 +90,7 @@ class SpeechService:
         finally:
             self._capacity.release()
 
-    def synthesize(self, text: str) -> tuple[bytes, str]:
+    def synthesize(self, text: str, language: Language) -> tuple[bytes, str]:
         if not isinstance(text, str) or not text.strip():
             raise ServiceError(422, "speech_text_empty")
         if len(text) > MAX_TTS_CHARACTERS:
@@ -105,7 +105,7 @@ class SpeechService:
                     TTS_URL,
                     json={
                         "model": TTS_MODEL,
-                        "voice": TTS_VOICE,
+                        "language": language,
                         "input": text,
                         "response_format": "wav",
                     },
@@ -122,7 +122,7 @@ class SpeechService:
                 audio = _read_bounded(response, MAX_SPEECH_RESPONSE_BYTES)
             if len(audio) < 12 or not audio.startswith(b"RIFF") or audio[8:12] != b"WAVE":
                 raise ServiceError(502, "speech_invalid_response")
-            LOGGER.info("synthesis completed model=%s voice=%s", TTS_MODEL, TTS_VOICE)
+            LOGGER.info("synthesis completed model=%s language=%s", TTS_MODEL, language)
             return audio, "audio/wav"
         except ServiceError as exc:
             LOGGER.warning("synthesis failed category=%s", exc.category)

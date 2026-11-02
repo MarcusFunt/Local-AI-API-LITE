@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from conftest import AsgiTestClient, load_dashboard_module
 
 from app.example_proxy import ExampleProxy
@@ -76,7 +77,8 @@ def _raw_request(client, method, path, *, content=None, headers=None, files=None
     return asyncio.run(send())
 
 
-def test_chat_proxy_forwards_fixed_payload_and_discards_browser_headers(tmp_path):
+@pytest.mark.parametrize("language", ["da", "en"])
+def test_chat_proxy_forwards_fixed_payload_and_discards_browser_headers(tmp_path, language):
     runner = ReadyRunner()
     captured = []
 
@@ -96,7 +98,11 @@ def test_chat_proxy_forwards_fixed_payload_and_discards_browser_headers(tmp_path
 
     response = client.post(
         "/api/control/v1/examples/chat-voice/chat",
-        json_body={"preset": "balanced", "messages": [{"role": "user", "content": "hello"}]},
+        json_body={
+            "language": language,
+            "preset": "balanced",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
         headers={
             "X-CSRF-Token": client.csrf_token,
             "Authorization": "Bearer browser-secret",
@@ -109,6 +115,7 @@ def test_chat_proxy_forwards_fixed_payload_and_discards_browser_headers(tmp_path
     assert response.json()["text"] == "A useful answer"
     assert captured[0].url == "http://127.0.0.1:8766/api/chat"
     assert json.loads(captured[0].content) == {
+        "language": language,
         "preset": "balanced",
         "messages": [{"role": "user", "content": "hello"}],
     }
@@ -120,7 +127,8 @@ def test_chat_proxy_forwards_fixed_payload_and_discards_browser_headers(tmp_path
     assert runner.activity_calls == 1
 
 
-def test_transcription_forwards_only_a_bounded_audio_part(tmp_path):
+@pytest.mark.parametrize("language", ["da", "en"])
+def test_transcription_forwards_bounded_audio_and_selected_language(tmp_path, language):
     runner = ReadyRunner()
     captured = []
 
@@ -135,19 +143,24 @@ def test_transcription_forwards_only_a_bounded_audio_part(tmp_path):
         client,
         "POST",
         "/api/control/v1/examples/chat-voice/transcribe",
-        files={"file": ("voice.webm", b"bounded-audio", "audio/webm")},
+        files=[
+            ("file", ("voice.webm", b"bounded-audio", "audio/webm")),
+            ("language", (None, language)),
+        ],
         headers={"X-CSRF-Token": client.csrf_token},
     )
 
     assert response.status_code == 200, response.text
     assert response.json() == {"text": "editable transcript"}
     assert captured[0].url == "http://127.0.0.1:8766/api/transcribe"
-    forwarded_body = captured[0].read().decode("latin1")
-    assert 'filename="recording"' in forwarded_body
-    assert "Content-Type: audio/webm" in forwarded_body
+    forwarded_body = captured[0].read()
+    assert b'filename="recording"' in forwarded_body
+    assert b"Content-Type: audio/webm" in forwarded_body
+    assert f'name="language"\r\n\r\n{language}\r\n'.encode() in forwarded_body
 
 
-def test_synthesis_returns_bounded_wav_without_forwarding_browser_secrets(tmp_path):
+@pytest.mark.parametrize("language", ["da", "en"])
+def test_synthesis_returns_bounded_wav_without_forwarding_browser_secrets(tmp_path, language):
     runner = ReadyRunner()
     captured = []
 
@@ -160,7 +173,7 @@ def test_synthesis_returns_bounded_wav_without_forwarding_browser_secrets(tmp_pa
 
     response = client.post(
         "/api/control/v1/examples/chat-voice/synthesize",
-        json_body={"text": "A spoken reply"},
+        json_body={"text": "A spoken reply", "language": language},
         headers={
             "X-CSRF-Token": client.csrf_token,
             "Cookie": (
@@ -173,16 +186,81 @@ def test_synthesis_returns_bounded_wav_without_forwarding_browser_secrets(tmp_pa
     assert response.status_code == 200
     assert response.content.startswith(b"RIFF")
     assert response.headers["content-type"] == "audio/wav"
-    assert json.loads(captured[0].content) == {"text": "A spoken reply"}
+    assert json.loads(captured[0].content) == {"text": "A spoken reply", "language": language}
     assert captured[0].headers.get("cookie") is None
     assert captured[0].headers.get("x-csrf-token") is None
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "base_payload"),
+    [
+        (
+            "chat",
+            {"preset": "balanced", "messages": [{"role": "user", "content": "hello"}]},
+        ),
+        ("synthesize", {"text": "A spoken reply"}),
+    ],
+)
+@pytest.mark.parametrize("language", [None, "fr", "da-DK"])
+def test_json_proxy_requires_supported_language_before_forwarding(tmp_path, endpoint, base_payload, language):
+    runner = ReadyRunner()
+    calls = []
+    client = _client(
+        tmp_path / f"{endpoint}-{language}",
+        runner,
+        _proxy(runner, lambda request: calls.append(request) or httpx.Response(200, json={"text": "unused"})),
+    )
+    client.setup_admin()
+    payload = dict(base_payload)
+    if language is not None:
+        payload["language"] = language
+
+    response = client.post(
+        f"/api/control/v1/examples/chat-voice/{endpoint}",
+        json_body=payload,
+        headers={"X-CSRF-Token": client.csrf_token},
+    )
+
+    assert response.status_code == 422
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("language_fields", "status_code"),
+    [
+        ([], 422),
+        ([("language", (None, "fr"))], 422),
+        ([("language", (None, "da")), ("language", (None, "en"))], 400),
+        ([("language", (None, "da")), ("file", ("other.webm", b"other", "audio/webm"))], 400),
+        ([("language", (None, "da")), ("extra", (None, "value"))], 400),
+    ],
+)
+def test_transcription_rejects_missing_invalid_and_duplicate_language_fields(
+    tmp_path, language_fields, status_code
+):
+    runner = ReadyRunner()
+    calls = []
+    client = _client(tmp_path / str(status_code), runner, _proxy(runner, lambda request: calls.append(request)))
+    client.setup_admin()
+    files = [("file", ("voice.webm", b"bounded-audio", "audio/webm")), *language_fields]
+
+    response = _raw_request(
+        client,
+        "POST",
+        "/api/control/v1/examples/chat-voice/transcribe",
+        files=files,
+        headers={"X-CSRF-Token": client.csrf_token},
+    )
+
+    assert response.status_code == status_code
+    assert calls == []
 
 
 def test_chat_proxy_requires_session_csrf_and_local_host_origin(tmp_path):
     runner = ReadyRunner()
     proxy = _proxy(runner, lambda _request: httpx.Response(200, json={"text": "ok"}))
     client = _client(tmp_path, runner, proxy)
-    body = {"preset": "fast", "messages": [{"role": "user", "content": "hi"}]}
+    body = {"language": "da", "preset": "fast", "messages": [{"role": "user", "content": "hi"}]}
 
     assert client.post("/api/control/v1/examples/chat-voice/chat", json_body=body).status_code == 401
     client.setup_admin()
@@ -211,12 +289,17 @@ def test_proxy_rejects_unready_example_and_unknown_chat_options(tmp_path):
 
     unavailable = client.post(
         "/api/control/v1/examples/chat-voice/chat",
-        json_body={"preset": "fast", "messages": [{"role": "user", "content": "hi"}]},
+        json_body={
+            "language": "da",
+            "preset": "fast",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
         headers=headers,
     )
     unsupported = client.post(
         "/api/control/v1/examples/chat-voice/chat",
         json_body={
+            "language": "da",
             "preset": "fast",
             "messages": [{"role": "user", "content": "hi"}],
             "model": "other-model",
@@ -242,7 +325,11 @@ def test_proxy_sanitizes_upstream_connection_timeout_and_http_errors(tmp_path):
         client.setup_admin()
         response = client.post(
             "/api/control/v1/examples/chat-voice/chat",
-            json_body={"preset": "fast", "messages": [{"role": "user", "content": "hi"}]},
+            json_body={
+                "language": "da",
+                "preset": "fast",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
             headers={"X-CSRF-Token": client.csrf_token},
         )
         assert response.status_code in {502, 503, 504}
@@ -289,7 +376,11 @@ def test_proxy_rejects_oversized_upstream_responses(tmp_path):
 
     response = client.post(
         "/api/control/v1/examples/chat-voice/chat",
-        json_body={"preset": "balanced", "messages": [{"role": "user", "content": "hi"}]},
+        json_body={
+            "language": "da",
+            "preset": "balanced",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
         headers={"X-CSRF-Token": client.csrf_token},
     )
 

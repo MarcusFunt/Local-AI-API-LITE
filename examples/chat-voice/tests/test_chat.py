@@ -41,7 +41,11 @@ def _completion(text="A helpful answer", *, finish_reason="stop"):
     ("preset", "max_tokens", "thinking"),
     [("fast", 192, False), ("balanced", 384, False), ("quality", 768, True)],
 )
-def test_chat_uses_fixed_model_and_exact_preset_mapping(preset, max_tokens, thinking):
+@pytest.mark.parametrize(
+    ("language", "instruction"),
+    [("da", "Respond in Danish."), ("en", "Respond in English.")],
+)
+def test_chat_adds_selected_language_instruction(preset, max_tokens, thinking, language, instruction):
     captured = []
 
     def handler(request):
@@ -49,7 +53,7 @@ def test_chat_uses_fixed_model_and_exact_preset_mapping(preset, max_tokens, thin
         return _completion()
 
     result = _service(handler).complete(
-        ChatRequest(preset=preset, messages=[{"role": "user", "content": "hello"}])
+        ChatRequest(language=language, preset=preset, messages=[{"role": "user", "content": "hello"}])
     )
 
     assert result.text == "A helpful answer"
@@ -60,13 +64,19 @@ def test_chat_uses_fixed_model_and_exact_preset_mapping(preset, max_tokens, thin
     assert payload == {
         "model": "ddu-narrator",
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant. Be clear, direct, and honest about uncertainty."},
+            {"role": "system", "content": "You are a helpful assistant. Be clear, direct, and honest about uncertainty. " + instruction},
             {"role": "user", "content": "hello"},
         ],
         "stream": False,
         "max_tokens": max_tokens,
         "chat_template_kwargs": {"enable_thinking": thinking},
     }
+
+
+@pytest.mark.parametrize("language", ["fr", "da-DK"])
+def test_chat_rejects_unsupported_language(language):
+    with pytest.raises(ValidationError):
+        ChatRequest(language=language, preset="fast", messages=[{"role": "user", "content": "hello"}])
 
 
 def test_chat_preserves_multiturn_order_and_rejects_client_model_options():
@@ -78,16 +88,16 @@ def test_chat_preserves_multiturn_order_and_rejects_client_model_options():
         {"role": "user", "content": "Follow up"},
     ]
 
-    service.complete(ChatRequest(preset="balanced", messages=messages))
+    service.complete(ChatRequest(language="da", preset="balanced", messages=messages))
     payload = json.loads(captured[0].content)
     assert payload["messages"][1:] == messages
     with pytest.raises(ValidationError):
         ChatRequest.model_validate(
-            {"preset": "fast", "messages": messages, "model": "another-model"}
+            {"language": "da", "preset": "fast", "messages": messages, "model": "another-model"}
         )
     with pytest.raises(ValidationError):
         ChatRequest.model_validate(
-            {"preset": "fast", "messages": messages, "max_tokens": 999_999}
+            {"language": "da", "preset": "fast", "messages": messages, "max_tokens": 999_999}
         )
     assert PRESETS["fast"].max_tokens == 192
 
@@ -95,9 +105,9 @@ def test_chat_preserves_multiturn_order_and_rejects_client_model_options():
 @pytest.mark.parametrize(
     "value",
     [
-        {"preset": "fast", "messages": []},
-        {"preset": "unknown", "messages": [{"role": "user", "content": "hello"}]},
-        {"preset": "fast", "messages": [{"role": "assistant", "content": "last"}]},
+        {"language": "da", "preset": "fast", "messages": []},
+        {"language": "da", "preset": "unknown", "messages": [{"role": "user", "content": "hello"}]},
+        {"language": "da", "preset": "fast", "messages": [{"role": "assistant", "content": "last"}]},
     ],
 )
 def test_chat_rejects_empty_invalid_and_malformed_turns(value):
@@ -108,21 +118,23 @@ def test_chat_rejects_empty_invalid_and_malformed_turns(value):
 def test_chat_bounds_history_and_response_and_rejects_truncation():
     with pytest.raises(ValidationError):
         ChatRequest(
+            language="da",
             preset="fast",
             messages=[{"role": "user", "content": "x" * 16_001}],
         )
     with pytest.raises(ValidationError):
         ChatRequest(
+            language="da",
             preset="fast",
             messages=[{"role": "user", "content": "x"}] * 17,
         )
     with pytest.raises(ServiceError):
         _service(lambda _request: _completion(finish_reason="length")).complete(
-            ChatRequest(preset="quality", messages=[{"role": "user", "content": "hello"}])
+            ChatRequest(language="da", preset="quality", messages=[{"role": "user", "content": "hello"}])
         )
     with pytest.raises(ServiceError):
         _service(lambda _request: _completion(text=" ")).complete(
-            ChatRequest(preset="fast", messages=[{"role": "user", "content": "hello"}])
+            ChatRequest(language="da", preset="fast", messages=[{"role": "user", "content": "hello"}])
         )
 
 
@@ -135,13 +147,13 @@ def test_chat_timeout_and_http_failure_are_sanitized_and_logs_are_content_free(c
     caplog.set_level(logging.INFO)
     with pytest.raises(ServiceError) as timeout_error:
         timeout_service.complete(
-            ChatRequest(preset="fast", messages=[{"role": "user", "content": secret_prompt}])
+            ChatRequest(language="da", preset="fast", messages=[{"role": "user", "content": secret_prompt}])
         )
     assert timeout_error.value.status_code == 504
     error_service = _service(lambda _request: httpx.Response(503, text=secret_answer))
     with pytest.raises(ServiceError) as http_error:
         error_service.complete(
-            ChatRequest(preset="fast", messages=[{"role": "user", "content": secret_prompt}])
+            ChatRequest(language="da", preset="fast", messages=[{"role": "user", "content": secret_prompt}])
         )
     assert http_error.value.status_code == 503
     assert secret_prompt not in caplog.text

@@ -53,7 +53,7 @@ try {
 
 $Action = New-ScheduledTaskAction `
     -Execute $DashboardPython `
-    -Argument '-m uvicorn app.main:app --host 127.0.0.1 --port 8765' `
+    -Argument '-m app.local_server' `
     -WorkingDirectory $BackendDirectory
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
 $Principal = New-ScheduledTaskPrincipal `

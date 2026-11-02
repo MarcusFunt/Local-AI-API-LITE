@@ -54,10 +54,212 @@ function ready() {
   apiMocks.synthesizeReply.mockResolvedValue(new Blob(["RIFF audio"], { type: "audio/wav" }));
 }
 
+function installRecorder() {
+  class FakeRecorder {
+    static isTypeSupported() { return true; }
+    ondataavailable?: (event: { data: Blob }) => void;
+    onstop?: () => void;
+    mimeType = "audio/webm";
+    state = "inactive";
+    start() { this.state = "recording"; }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob(["audio"], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+  }
+  const stream = { getTracks: () => [{ stop: vi.fn() }] };
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+  vi.stubGlobal("MediaRecorder", FakeRecorder);
+  return { getUserMedia, stream };
+}
+
+function installAudioUrls() {
+  vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:spoken-reply"), revokeObjectURL: vi.fn() });
+}
+
 describe("ExamplesPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     ready();
+  });
+
+  it("waits for a successful catalog start to become ready before opening the workspace", async () => {
+    const onOpenWorkspace = vi.fn();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    apiMocks.startExample.mockResolvedValue(makeStatus("starting"));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={onOpenWorkspace} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Stopped");
+    apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
+    await screen.findByText("Preparing");
+    expect(onOpenWorkspace).not.toHaveBeenCalled();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(onOpenWorkspace).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Ready");
+    expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the workspace when ready despite an older stopped refresh resolving after a successful start", async () => {
+    const onOpenWorkspace = vi.fn();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    apiMocks.startExample.mockResolvedValue(makeStatus("starting"));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={onOpenWorkspace} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Stopped");
+    let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
+    await screen.findByText("Preparing");
+    await act(async () => resolveOldRefresh([makeStatus("stopped")]));
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Ready");
+    expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the newer lifecycle observation when overlapping refreshes complete out of order", async () => {
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Ready");
+    let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Preparing");
+    await act(async () => resolveOldRefresh([makeStatus("stopped")]));
+    expect(screen.queryByText("Stopped")).toBeNull();
+    expect(screen.getByText("Preparing")).toBeTruthy();
+  });
+
+  it("ignores a refresh from before Stop while the lifecycle operation is pending", async () => {
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Ready");
+    let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
+    let resolveStop!: (status: ExamplePublicStatus) => void;
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
+    apiMocks.stopExample.mockImplementationOnce(() => new Promise((resolve) => { resolveStop = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop example" }));
+    await screen.findByText("Stopping");
+    await act(async () => resolveOldRefresh([makeStatus("ready")]));
+    expect(screen.queryByText("Ready")).toBeNull();
+    expect(screen.getByText("Stopping")).toBeTruthy();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    await act(async () => resolveStop(makeStatus("stopped")));
+    expect(await screen.findByText("Stopped")).toBeTruthy();
+  });
+
+  it("stays in the catalog with a start error after a rejected start, even if status later becomes ready", async () => {
+    const onOpenWorkspace = vi.fn();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    apiMocks.startExample.mockRejectedValue(new Error("start rejected"));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={onOpenWorkspace} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Stopped");
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "The example start request could not be completed. Refresh status and try again.");
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Ready");
+    expect(onOpenWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("defaults language to Danish, preserves the conversation when changed, and resets after reload", async () => {
+    const page = render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const language = await screen.findByRole("combobox", { name: "Language" }) as HTMLSelectElement;
+    expect(language.id).toBe("example-language");
+    expect(language.value).toBe("da");
+    expect(Array.from(language.options, (option) => [option.value, option.text])).toEqual([["da", "Danish"], ["en", "English"]]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "First turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("A useful reply");
+    fireEvent.change(language, { target: { value: "en" } });
+    expect(screen.getByText("First turn")).toBeTruthy();
+    expect(screen.getByText("A useful reply")).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Next turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalledTimes(2));
+    expect(apiMocks.sendChatTurn.mock.calls[0][1]).toBe("da");
+    expect(apiMocks.sendChatTurn.mock.calls[1].slice(1, 4)).toEqual(["en", "balanced", [
+      { role: "user", content: "First turn" }, { role: "assistant", content: "A useful reply" }, { role: "user", content: "Next turn" },
+    ]]);
+    page.unmount();
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    expect((await screen.findByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("da");
+    expect(screen.queryByText("First turn")).toBeNull();
+  });
+
+  it("sends English selection to chat, transcription, and manual speech", async () => {
+    installRecorder();
+    installAudioUrls();
+    apiMocks.transcribeAudio.mockResolvedValue({ text: "Good morning" });
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Language" }), { target: { value: "en" } });
+    expect(screen.getByText("Turn-based English voice input")).toBeTruthy();
+    const push = screen.getByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Good morning"));
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledWith("csrf-value", expect.any(Blob), "en", expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("A useful reply");
+    expect(apiMocks.sendChatTurn).toHaveBeenCalledWith("csrf-value", "en", "balanced", [{ role: "user", content: "Good morning" }], expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button", { name: "Speak reply" }));
+    await screen.findByLabelText("Spoken reply audio");
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", "en", expect.any(AbortSignal));
+  });
+
+  it("keeps the chat language captured at start for automatic speech while later actions use the new selection", async () => {
+    installAudioUrls();
+    let resolveChat: ((reply: { text: string; elapsed_ms: number }) => void) | undefined;
+    apiMocks.sendChatTurn.mockImplementationOnce(() => new Promise((resolve) => { resolveChat = resolve; }));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const language = await screen.findByRole("combobox", { name: "Language" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Speak replies automatically" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Danish turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.change(language, { target: { value: "en" } });
+    await act(async () => { resolveChat?.({ text: "Danish reply", elapsed_ms: 1 }); });
+    await screen.findByLabelText("Spoken reply audio");
+    expect(apiMocks.sendChatTurn.mock.calls[0][1]).toBe("da");
+    expect(apiMocks.synthesizeReply.mock.calls[0].slice(0, 3)).toEqual(["csrf-value", "Danish reply", "da"]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "English turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("A useful reply");
+    await waitFor(() => expect(apiMocks.synthesizeReply).toHaveBeenCalledTimes(2));
+    expect(apiMocks.sendChatTurn.mock.calls[1][1]).toBe("en");
+    expect(apiMocks.synthesizeReply.mock.calls[1].slice(0, 3)).toEqual(["csrf-value", "A useful reply", "en"]);
+    fireEvent.change(language, { target: { value: "da" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Speak reply" })[1]);
+    await waitFor(() => expect(apiMocks.synthesizeReply).toHaveBeenCalledTimes(3));
+    expect(apiMocks.synthesizeReply.mock.calls[2].slice(0, 3)).toEqual(["csrf-value", "A useful reply", "da"]);
+  });
+
+  it("captures recording language before awaiting microphone permission and uses the new selection for the next recording", async () => {
+    const { getUserMedia, stream } = installRecorder();
+    let allowMicrophone: ((stream: unknown) => void) | undefined;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const language = await screen.findByRole("combobox", { name: "Language" });
+    const push = screen.getByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    fireEvent.change(language, { target: { value: "en" } });
+    await act(async () => { allowMicrophone?.(stream); });
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
+    expect(apiMocks.transcribeAudio.mock.calls[0][2]).toBe("da");
+    await screen.findByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(2));
+    expect(apiMocks.transcribeAudio.mock.calls[1][2]).toBe("en");
   });
 
   it.each([
@@ -69,13 +271,13 @@ describe("ExamplesPage", () => {
     ["recovery-required", "Recovery required"],
   ] as const)("renders the %s lifecycle state", async (state, label) => {
     apiMocks.getExamples.mockResolvedValue([makeStatus(state)]);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     expect(await screen.findByText(label)).toBeTruthy();
   });
 
   it("requires the narrator to start and shows voice as an optional paired dependency", async () => {
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped", { chat: "stopped", voice: "stopped" })]);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
 
     expect(await screen.findByText(/ddu-narrator is not ready/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start example" }).hasAttribute("disabled")).toBe(true);
@@ -88,7 +290,7 @@ describe("ExamplesPage", () => {
   });
 
   it("uses the selected fixed preset for a multi-turn chat and displays timing", async () => {
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     fireEvent.change(screen.getByRole("slider", { name: "Speed ↔ Quality" }), { target: { value: "2" } });
     expect(screen.getByText("Quality", { selector: "output" })).toBeTruthy();
@@ -98,8 +300,9 @@ describe("ExamplesPage", () => {
     expect(await screen.findByText("A useful reply")).toBeTruthy();
     expect(screen.getByText("321 ms")).toBeTruthy();
     await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalled());
-    expect(apiMocks.sendChatTurn.mock.calls[0].slice(0, 3)).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[0].slice(0, 4)).toEqual([
       "csrf-value",
+      "da",
       "quality",
       [{ role: "user", content: "Compare two ideas" }],
     ]);
@@ -110,7 +313,7 @@ describe("ExamplesPage", () => {
     apiMocks.sendChatTurn
       .mockRejectedValueOnce(new Error("temporary network failure"))
       .mockResolvedValueOnce({ text: "Recovered reply", elapsed_ms: 123, usage: {} });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
 
     const composer = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
@@ -123,7 +326,7 @@ describe("ExamplesPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("Recovered reply")).toBeTruthy();
-    expect(apiMocks.sendChatTurn.mock.calls[1][2]).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[1][3]).toEqual([
       { role: "user", content: "Please keep this prompt" },
     ]);
   });
@@ -131,7 +334,7 @@ describe("ExamplesPage", () => {
   it("shows live elapsed time and changes to still working after ten seconds", async () => {
     let resolveChat: ((result: { text: string; elapsed_ms: number; usage: Record<string, number> }) => void) | undefined;
     apiMocks.sendChatTurn.mockImplementation(() => new Promise((resolve) => { resolveChat = resolve; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     vi.useFakeTimers();
 
@@ -153,14 +356,14 @@ describe("ExamplesPage", () => {
   });
 
   it("cancels a chat request and retries without duplicating its pending turn", async () => {
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Earlier turn" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText("A useful reply");
 
     let requestSignal: AbortSignal | undefined;
-    apiMocks.sendChatTurn.mockImplementation((_csrf, _preset, _messages, signal) => new Promise((_resolve, reject) => {
+    apiMocks.sendChatTurn.mockImplementation((_csrf, _language, _preset, _messages, signal) => new Promise((_resolve, reject) => {
       requestSignal = signal;
       signal.addEventListener("abort", () => {
         const error = new Error("aborted");
@@ -183,7 +386,7 @@ describe("ExamplesPage", () => {
     apiMocks.sendChatTurn.mockResolvedValueOnce({ text: "Retried reply", elapsed_ms: 456, usage: {} });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("Retried reply")).toBeTruthy();
-    expect(apiMocks.sendChatTurn.mock.calls[2][2]).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[2][3]).toEqual([
       { role: "user", content: "Earlier turn" },
       { role: "assistant", content: "A useful reply" },
       { role: "user", content: "Retry this turn" },
@@ -210,11 +413,11 @@ describe("ExamplesPage", () => {
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     let transcriptionSignal: AbortSignal | undefined;
     let resolveTranscription: ((result: { text: string }) => void) | undefined;
-    apiMocks.transcribeAudio.mockImplementation((_csrf, _audio, signal) => new Promise((resolve) => {
+    apiMocks.transcribeAudio.mockImplementation((_csrf, _audio, _language, signal) => new Promise((resolve) => {
       transcriptionSignal = signal;
       resolveTranscription = resolve;
     }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const clear = await screen.findByRole("button", { name: "Clear session" }) as HTMLButtonElement;
     const pushToTalk = screen.getByRole("button", { name: "Push to talk" });
     fireEvent.pointerDown(pushToTalk);
@@ -239,23 +442,28 @@ describe("ExamplesPage", () => {
   });
 
   it("keeps chat closed while stop is pending and refreshes status after a timeout", async () => {
+    let resolveInitialStatus: ((statuses: ExamplePublicStatus[]) => void) | undefined;
     let rejectStop: ((error: Error) => void) | undefined;
-    apiMocks.getExamples.mockResolvedValueOnce([makeStatus("ready")]).mockResolvedValueOnce([makeStatus("stopping")]);
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveInitialStatus = resolve; }))
+      .mockResolvedValueOnce([makeStatus("stopping")]);
     apiMocks.stopExample.mockImplementation(() => new Promise((_resolve, reject) => { rejectStop = reject; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Stop example" }));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const stopButton = await screen.findByRole("button", { name: "Stop example" });
+    expect((stopButton as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => resolveInitialStatus?.([makeStatus("ready")]));
+    await waitFor(() => expect((stopButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(stopButton);
 
-    expect(await screen.findByText("Stopping")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Stopping/ })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
     expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
     await act(async () => {
       rejectStop?.(new Error("browser request timed out"));
-      await Promise.resolve();
     });
 
-    expect(await screen.findByText("Stopping")).toBeTruthy();
+    await waitFor(() => expect(apiMocks.getExamples).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /Stopping/ })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    expect(apiMocks.getExamples).toHaveBeenCalledTimes(2);
   });
 
   it("can synthesize and play a reply through the dashboard API", async () => {
@@ -264,7 +472,7 @@ describe("ExamplesPage", () => {
       createObjectURL: vi.fn(() => "blob:spoken-reply"),
       revokeObjectURL: vi.fn(),
     });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Say hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -272,14 +480,14 @@ describe("ExamplesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Speak reply" }));
 
     expect(await screen.findByLabelText("Spoken reply audio")).toBeTruthy();
-    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", expect.any(AbortSignal));
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", "da", expect.any(AbortSignal));
   });
 
   it("sends CSRF with lifecycle requests and prevents duplicate starts", async () => {
     let resolveStart: ((status: ExamplePublicStatus) => void) | undefined;
     apiMocks.startExample.mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
     apiMocks.getExamples.mockResolvedValueOnce([makeStatus("stopped")]).mockResolvedValue([makeStatus("starting")]);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const start = await screen.findByRole("button", { name: "Start example" });
 
     fireEvent.click(start);
@@ -294,7 +502,7 @@ describe("ExamplesPage", () => {
     const onSessionExpired = vi.fn();
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
     apiMocks.startExample.mockRejectedValueOnce({ status: 409 });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={onSessionExpired} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={onSessionExpired} />);
     fireEvent.click(await screen.findByRole("button", { name: "Start example" }));
     expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/another dashboard activity/i);
 
@@ -306,7 +514,7 @@ describe("ExamplesPage", () => {
   it("shows CSRF and network failures without displaying server details", async () => {
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
     apiMocks.startExample.mockRejectedValueOnce({ status: 403 }).mockRejectedValueOnce(new Error("Failed to fetch"));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Start example" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/request verification failed/i);
     fireEvent.click(screen.getByRole("button", { name: "Start example" }));
@@ -316,7 +524,7 @@ describe("ExamplesPage", () => {
   it("prevents duplicate stop requests while a stop is pending", async () => {
     let resolveStop: ((status: ExamplePublicStatus) => void) | undefined;
     apiMocks.stopExample.mockImplementation(() => new Promise((resolve) => { resolveStop = resolve; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const stop = await screen.findByRole("button", { name: "Stop example" });
     fireEvent.click(stop);
     expect(stop.hasAttribute("disabled")).toBe(true);
@@ -325,18 +533,36 @@ describe("ExamplesPage", () => {
     resolveStop?.(makeStatus("stopping"));
   });
 
-  it("reports microphone denial without keeping a recording stream", async () => {
+  it("explains that phone microphone recording needs the Tailscale HTTPS page", async () => {
+    class FakeRecorder {
+      static isTypeSupported() { return true; }
+    }
+    vi.stubGlobal("isSecureContext", false);
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [] });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.pointerDown(await screen.findByRole("button", { name: /push to talk/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/HTTPS/i);
+    expect(alert.textContent).toMatch(/Tailscale/i);
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("reports microphone denial with browser settings guidance and no transcription", async () => {
     class FakeRecorder {
       static isTypeSupported() { return true; }
     }
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     const getUserMedia = vi.fn().mockRejectedValue(new Error("Permission denied"));
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
 
-    expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/microphone access was denied/i);
+    expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/allow microphone access.*browser settings/i);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
@@ -360,7 +586,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "" });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
@@ -389,7 +615,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "Godmorgen alle sammen" });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
     fireEvent.change(composer, { target: { value: "Typed before speaking" } });
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
@@ -402,7 +628,7 @@ describe("ExamplesPage", () => {
     fireEvent.change(composer, { target: { value: "Typed before speaking\nGodmorgen, team" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalled());
-    expect(apiMocks.sendChatTurn.mock.calls[0][2]).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[0][3]).toEqual([
       { role: "user", content: "Typed before speaking\nGodmorgen, team" },
     ]);
   });
@@ -425,7 +651,7 @@ describe("ExamplesPage", () => {
       value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
@@ -434,6 +660,39 @@ describe("ExamplesPage", () => {
     await waitFor(() => expect(track.stop).toHaveBeenCalled());
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
     expect(screen.getByText(/recording cancelled/i)).toBeTruthy();
+  });
+
+  it("stops recording when a phone pointer is released outside the hold button", async () => {
+    class FakeRecorder {
+      static isTypeSupported() { return true; }
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      mimeType = "audio/webm";
+      state = "inactive";
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["audio"], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    const track = { stop: vi.fn() };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+    });
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    apiMocks.transcribeAudio.mockResolvedValue({ text: "Released outside" });
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Released outside");
   });
 
   it("automatically stops capture at the 120 second limit", async () => {
@@ -453,7 +712,7 @@ describe("ExamplesPage", () => {
       value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }) },
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     vi.useFakeTimers();
     await act(async () => {

@@ -50,6 +50,7 @@ jobs:
         run: >-
           ruff check scripts tests
           dashboard/backend/app dashboard/backend/tests
+          services/speech/speech_worker services/speech/tests
           services/retrieval/retrieval_worker
           examples/chat-voice/app examples/chat-voice/tests
 
