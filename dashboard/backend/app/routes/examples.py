@@ -131,10 +131,22 @@ async def transcribe_audio(
     except Exception:  # noqa: BLE001 - multipart parser errors can contain submitted values.
         raise HTTPException(status_code=400, detail="Audio upload is invalid") from None
     items = list(form.multi_items())
-    if len(items) != 1 or items[0][0] != "file" or not isinstance(items[0][1], UploadFile):
+    names = [name for name, _value in items]
+    if names.count("language") == 0:
+        await form.close()
+        raise HTTPException(status_code=422, detail="Language is required")
+    if len(items) != 2 or set(names) != {"file", "language"}:
         await form.close()
         raise HTTPException(status_code=400, detail="Audio upload is invalid")
-    upload = items[0][1]
+    values = dict(items)
+    upload = values.get("file")
+    language = values.get("language")
+    if not isinstance(upload, UploadFile):
+        await form.close()
+        raise HTTPException(status_code=400, detail="Audio upload is invalid")
+    if not isinstance(language, str) or language not in {"da", "en"}:
+        await form.close()
+        raise HTTPException(status_code=422, detail="Language is not supported")
     try:
         content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
         if content_type not in ALLOWED_AUDIO_TYPES:
@@ -143,7 +155,7 @@ async def transcribe_audio(
         if len(audio) > request.app.state.example_proxy.max_audio_bytes:
             raise HTTPException(status_code=413, detail="Audio upload is too large")
         try:
-            result = request.app.state.example_proxy.transcribe(audio, content_type)
+            result = request.app.state.example_proxy.transcribe(audio, content_type, language)
             return JSONResponse(content=result)
         except ExampleProxyError as exc:
             raise _proxy_error(exc) from None

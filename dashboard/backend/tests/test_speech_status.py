@@ -118,6 +118,9 @@ def test_tts_worker_with_approved_bilingual_revision_is_ready():
     assert result["state"] == "Ready"
     assert result["model_revision"] == revision
     assert result["expected_model_revision"] == revision
+    assert result["model_repository"] == (
+        "rhasspy/piper-voices · da: da_DK-talesyntese-medium; en: en_US-ljspeech-medium"
+    )
     assert result["last_error_category"] is None
 
 

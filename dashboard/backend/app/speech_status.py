@@ -34,7 +34,7 @@ SERVICE_SPECS: dict[str, dict[str, str]] = {
         "project_name": SPEECH_PROJECT_NAME,
         "model_id": "rhasspy/piper-voices",
         "revision": "375a0fe641dea077c2a47b4e9a056d6da521eed3",
-        "repository": "rhasspy/piper-voices · da_DK-talesyntese-medium",
+        "repository": "rhasspy/piper-voices · da: da_DK-talesyntese-medium; en: en_US-ljspeech-medium",
     },
 }
 _METRIC_INTEGER_FIELDS = {
