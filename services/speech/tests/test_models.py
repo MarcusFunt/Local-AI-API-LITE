@@ -86,7 +86,7 @@ def test_tts_loads_fixed_voices_from_language_artifact_paths_and_synthesizes_bot
 
 @pytest.mark.parametrize("language", ["da", "en"])
 @pytest.mark.parametrize("damage", [
-    "missing_entry", "wrong_voice", "missing_model", "changed_model",
+    "missing_entry", "wrong_voice", "missing_model", "changed_model", "empty_model",
     "missing_config", "changed_config", "invalid_config", "invalid_sample_rate",
 ])
 def test_tts_artifact_failure_keeps_readiness_false(artifacts, piper_runtime, language, damage):
@@ -96,6 +96,10 @@ def test_tts_artifact_failure_keeps_readiness_false(artifacts, piper_runtime, la
         del manifest["voices"][language]
     elif damage == "wrong_voice":
         entry["voice_id"] = "arbitrary-voice"
+    elif damage == "empty_model":
+        model = base / language / "voice.onnx"
+        model.write_bytes(b"")
+        entry["files"]["voice.onnx"] = hashlib.sha256(b"").hexdigest()
     elif damage.startswith("missing_"):
         filename = "voice.onnx" if damage == "missing_model" else "voice.onnx.json"
         (base / language / filename).unlink()

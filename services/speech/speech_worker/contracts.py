@@ -9,9 +9,7 @@ STT_MODEL_ID = "Systran/faster-whisper-small"
 STT_MODEL_REVISION = "536b0662742c02347bc0e980a01041f333bce120"
 TTS_ALIAS = "ddu-tts"
 TTS_MODEL_ID = "rhasspy/piper-voices"
-TTS_MODEL_REVISION = "320d5f7f7751a17ef6512d5c23863056c6a11c0f"
-# Temporary compatibility for the single-voice installer, migrated in the next task.
-TTS_VOICE_ID = "da_DK-talesyntese-medium"
+TTS_MODEL_REVISION = "375a0fe641dea077c2a47b4e9a056d6da521eed3"
 SpeechLanguage = Literal["da", "en"]
 TTS_VOICE_IDS: dict[SpeechLanguage, str] = {
     "da": "da_DK-talesyntese-medium",

@@ -127,6 +127,7 @@ def create_tts_adapter() -> Any:
             if (
                 type(sample_rate) is not int
                 or sample_rate <= 0
+                or voice_path.stat().st_size <= 0
                 or entry.get("files") != {
                     "voice.onnx": _sha256(voice_path),
                     "voice.onnx.json": _sha256(config_path),

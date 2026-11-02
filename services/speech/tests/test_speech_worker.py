@@ -145,7 +145,7 @@ def test_tts_returns_wav_and_rejects_unrecognized_model_or_voice():
         assert client.get("/ready").json() == {"status": "ready"}
         model = client.get("/v1/models").json()["data"][0]
         assert model["id"] == "ddu-tts"
-        assert model["revision"] == "320d5f7f7751a17ef6512d5c23863056c6a11c0f"
+        assert model["revision"] == "375a0fe641dea077c2a47b4e9a056d6da521eed3"
         speech = client.post(
             "/v1/audio/speech",
             json={"model": "ddu-tts", "input": "God dag.", "language": "da"},
