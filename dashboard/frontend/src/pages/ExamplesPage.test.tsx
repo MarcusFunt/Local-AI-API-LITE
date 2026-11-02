@@ -85,6 +85,51 @@ describe("ExamplesPage", () => {
     ready();
   });
 
+  it.each([
+    { state: "ready", label: "Ready", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
+    { state: "starting", label: "Preparing", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
+    { state: "stopping", label: "Stopping", start: "Start example", startDisabled: true, stop: "Stopping…", stopDisabled: true },
+    { state: "failed", label: "Failed", start: "Retry start", startDisabled: false, stop: "Stop example", stopDisabled: false },
+    { state: "recovery-required", label: "Recovery required", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
+  ] as const)("exposes $state status and lifecycle actions in the workspace header", async ({ state, label, start, startDisabled, stop, stopDisabled }) => {
+    apiMocks.getExamples.mockResolvedValue([makeStatus(state)]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
+    expect(await workspace.findByText(label, { exact: true })).toBeTruthy();
+    expect(workspace.getByRole("heading", { level: 1, name: "Chat + Voice" })).toBeTruthy();
+    expect((workspace.getByRole("button", { name: start }) as HTMLButtonElement).disabled).toBe(startDisabled);
+    expect((workspace.getByRole("button", { name: stop }) as HTMLButtonElement).disabled).toBe(stopDisabled);
+    expect((workspace.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps text chat usable and explains stopped voice dependencies in the workspace", async () => {
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready", { voice: "stopped" })]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const message = await screen.findByRole("textbox", { name: "Message" });
+    expect((message as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Push to talk" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Chat is ready while push-to-talk and spoken replies wait for both ddu-stt and ddu-tts/)).toBeTruthy();
+    fireEvent.change(message, { target: { value: "Text still works" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("A useful reply")).toBeTruthy();
+  });
+
+  it("discloses workspace dependencies and recovery guidance only when service details are expanded", async () => {
+    apiMocks.getExamples.mockResolvedValue([{ ...makeStatus("recovery-required"), last_error_category: "recovery_required" }]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Recovery required");
+    const summary = screen.getByText("Services and status details", { selector: "summary" });
+    const disclosure = summary.closest("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(true);
+    expect(within(disclosure).getByText("Chat model")).toBeTruthy();
+    expect(within(disclosure).getByText("Speech services")).toBeTruthy();
+    expect(within(disclosure).getByRole("status").textContent).toMatch(/confirm the container state before another start/);
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(false);
+  });
+
   it("waits for a successful catalog start to become ready before opening the workspace", async () => {
     const onOpenWorkspace = vi.fn();
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);

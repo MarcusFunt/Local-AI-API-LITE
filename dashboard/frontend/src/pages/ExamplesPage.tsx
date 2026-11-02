@@ -604,6 +604,35 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     }
   };
 
+  const lifecycleActions = <div className="example-actions">
+    {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      onOpenWorkspace();
+    }}>Open Chat + Voice</a>}
+    <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
+      {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
+    </button>
+    <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
+      {pendingAction === "stop" || status?.state === "stopping" ? "Stopping…" : "Stop example"}
+    </button>
+    <button className="text-button" type="button" disabled={loading} onClick={() => void refresh()}>
+      Refresh status
+    </button>
+  </div>;
+
+  const serviceDetails = <>
+    <p className="example-summary">{statusSummary}</p>
+    <div className="example-dependencies">
+      <DependencyRow title="Chat model" detail={chatDependencyDetail} state={status?.chat_dependency.state ?? "unknown"} />
+      <DependencyRow title="Speech services" detail={voiceDependencyDetail} state={status?.voice_dependency.state ?? "unknown"} />
+    </div>
+    {status?.state === "ready" && <div className="example-idle-note">Idle stop: {formatDate(status.idle_expires_at)} · Stops after 30 minutes without app requests.</div>}
+    {status?.started_at && status.state !== "stopped" && <div className="example-started-note">Started {formatDate(status.started_at)}</div>}
+    {status && !status.activity_available && status.state !== "ready" && <div className="example-started-note">Another dashboard activity is active. Finish it before starting this example.</div>}
+  </>;
+  const recoveryGuidance = status?.last_error_category && <p className="example-error" role="status">{FAILURE_COPY[status.last_error_category] ?? "The example needs recovery. Refresh status before retrying."}</p>;
+
   return <div className={`page-content examples-content${workspace ? " example-workspace" : ""}`}>
     {workspace && <a className="workspace-return" href="/examples" onClick={(event) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -616,39 +645,23 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       <p>Chat stays in this browser session. Push-to-talk is turn based: record, review the transcript, then send it with the conversation.</p>
     </section>}
 
-    <section className="panel example-card" aria-labelledby="example-title">
-      <div className="example-card-heading">
-        <div><span className="eyebrow">{workspace ? "LOCAL WORKSPACE" : "EXAMPLE 01"}</span>{workspace ? <h1 id="example-title">Chat + Voice</h1> : <h2 id="example-title">Chat + Voice</h2>}</div>
-        {status ? <StateBadge state={status.state} /> : <span className="state-badge state-unknown">Loading</span>}
+    <section className="panel example-card" aria-label={workspace ? "Chat + Voice workspace" : undefined} aria-labelledby={workspace ? undefined : "example-title"}>
+      <div className={workspace ? "workspace-header" : undefined}>
+        <div className="example-card-heading">
+          <div><span className="eyebrow">{workspace ? "LOCAL WORKSPACE" : "EXAMPLE 01"}</span>{workspace ? <h1 id="example-title">Chat + Voice</h1> : <h2 id="example-title">Chat + Voice</h2>}</div>
+          {status ? <StateBadge state={status.state} /> : <span className="state-badge state-unknown">Loading</span>}
+        </div>
+        {workspace && lifecycleActions}
       </div>
-      <p className="example-summary">{statusSummary}</p>
-      {!workspace && <div className="example-dependencies">
-        <DependencyRow title="Chat model" detail={chatDependencyDetail} state={status?.chat_dependency.state ?? "unknown"} />
-        <DependencyRow title="Speech services" detail={voiceDependencyDetail} state={status?.voice_dependency.state ?? "unknown"} />
-      </div>}
-      {status?.state === "ready" && <div className="example-idle-note">Idle stop: {formatDate(status.idle_expires_at)} · Stops after 30 minutes without app requests.</div>}
-      {status?.started_at && status.state !== "stopped" && <div className="example-started-note">Started {formatDate(status.started_at)}</div>}
-      {status && !status.activity_available && status.state !== "ready" && <div className="example-started-note">Another dashboard activity is active. Finish it before starting this example.</div>}
+      {workspace ? <details className="workspace-service-details">
+        <summary>Services and status details</summary>
+        <div className="workspace-service-content">{serviceDetails}{recoveryGuidance}</div>
+      </details> : serviceDetails}
       {statusError && <p className="example-error" role="alert">{statusError}</p>}
       {error && <p className="example-error" role="alert">{error}</p>}
       {notice && <p className="example-notice" role="status">{notice}</p>}
-      {status?.last_error_category && <p className="example-error" role="status">{FAILURE_COPY[status.last_error_category] ?? "The example needs recovery. Refresh status before retrying."}</p>}
-      <div className="example-actions">
-        {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
-          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-          event.preventDefault();
-          onOpenWorkspace();
-        }}>Open Chat + Voice</a>}
-        <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
-          {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
-        </button>
-        <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
-          {pendingAction === "stop" || status?.state === "stopping" ? "Stopping…" : "Stop example"}
-        </button>
-        <button className="text-button" type="button" disabled={loading} onClick={() => void refresh()}>
-          Refresh status
-        </button>
-      </div>
+      {!workspace && recoveryGuidance}
+      {!workspace && lifecycleActions}
     </section>
 
     {appReady && <section className="panel chat-panel" aria-labelledby="conversation-title">

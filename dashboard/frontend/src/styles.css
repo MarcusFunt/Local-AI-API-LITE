@@ -335,6 +335,15 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .workspace-open { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .example-workspace .example-card { margin-top: 8px; }
 .example-workspace .example-card-heading h1 { margin: 6px 0 0; color: #e3e9e4; font: 600 24px var(--display); }
+.workspace-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; }
+.workspace-header .example-card-heading { flex: 1 1 240px; }
+.workspace-header .example-actions { flex-wrap: wrap; margin-top: 0; }
+.workspace-service-details { margin-top: 18px; border: 1px solid #293b30; border-radius: 8px; background: #111713; }
+.workspace-service-details > summary { min-height: 44px; padding: 14px; color: #a8b7ad; font-size: 12px; cursor: pointer; }
+.workspace-service-details > summary:focus-visible,
+.workspace-header button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+.workspace-service-details[open] > summary { border-bottom: 1px solid #293b30; }
+.workspace-service-content { padding: 0 14px 14px; }
 .example-workspace .chat-panel { min-width: 0; }
 .example-workspace .conversation-log { max-height: max(300px, 46dvh); }
 .example-card, .chat-panel { margin-top: 13px; padding: 20px; }
@@ -469,6 +478,9 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .example-card, .chat-panel { padding: 16px; }
   .example-workspace { padding-top: max(8px, env(safe-area-inset-top, 0px)); }
   .workspace-return { min-height: 48px; }
+  .workspace-header { gap: 14px; }
+  .workspace-header .example-actions { width: 100%; }
+  .workspace-service-details > summary { min-height: 48px; }
   .example-actions .workspace-open { flex: 1 1 100%; min-height: 48px; }
   .example-workspace .conversation-log { max-height: min(42dvh, 420px); }
   .example-dependencies { grid-template-columns: 1fr; }
