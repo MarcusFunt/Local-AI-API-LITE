@@ -326,6 +326,17 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .settings-form .primary-button { align-self: end; }
 
 .examples-intro { margin-bottom: 14px; }
+.app-shell-workspace .sidebar, .app-shell-workspace .topbar { display: none; }
+.app-shell-workspace .main-area { margin-left: 0; }
+.app-shell-workspace .page-content, .app-shell-workspace .app-footer { max-width: none; }
+.example-workspace { padding-top: 20px; }
+.workspace-return { display: inline-flex; align-items: center; min-height: 44px; color: var(--mint); font-size: 12px; text-underline-offset: 4px; }
+.workspace-return:focus-visible, .workspace-open:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+.workspace-open { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.example-workspace .example-card { margin-top: 8px; }
+.example-workspace .example-card-heading h1 { margin: 6px 0 0; color: #e3e9e4; font: 600 24px var(--display); }
+.example-workspace .chat-panel { min-width: 0; }
+.example-workspace .conversation-log { max-height: max(300px, 46dvh); }
 .example-card, .chat-panel { margin-top: 13px; padding: 20px; }
 .example-card-heading, .chat-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .example-card-heading h2, .chat-panel-heading h2 { margin: 6px 0 0; color: #e3e9e4; font: 600 16px var(--display); }
@@ -456,6 +467,10 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .speech-service-grid { grid-template-columns: 1fr; }
   .speech-profile-heading { flex-direction: column; }
   .example-card, .chat-panel { padding: 16px; }
+  .example-workspace { padding-top: max(8px, env(safe-area-inset-top, 0px)); }
+  .workspace-return { min-height: 48px; }
+  .example-actions .workspace-open { flex: 1 1 100%; min-height: 48px; }
+  .example-workspace .conversation-log { max-height: min(42dvh, 420px); }
   .example-dependencies { grid-template-columns: 1fr; }
   .example-actions { flex-wrap: wrap; gap: 8px; }
   .example-actions .primary-button, .example-actions .secondary-button { flex: 1 1 auto; min-height: 48px; }

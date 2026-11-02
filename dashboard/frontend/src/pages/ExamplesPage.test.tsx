@@ -85,8 +85,40 @@ describe("ExamplesPage", () => {
     ready();
   });
 
+  it("waits for a successful catalog start to become ready before opening the workspace", async () => {
+    const onOpenWorkspace = vi.fn();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    apiMocks.startExample.mockResolvedValue(makeStatus("starting"));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={onOpenWorkspace} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Stopped");
+    apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
+    await screen.findByText("Preparing");
+    expect(onOpenWorkspace).not.toHaveBeenCalled();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(onOpenWorkspace).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Ready");
+    expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays in the catalog with a start error after a rejected start, even if status later becomes ready", async () => {
+    const onOpenWorkspace = vi.fn();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    apiMocks.startExample.mockRejectedValue(new Error("start rejected"));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={onOpenWorkspace} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Stopped");
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "The example start request could not be completed. Refresh status and try again.");
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Ready");
+    expect(onOpenWorkspace).not.toHaveBeenCalled();
+  });
+
   it("defaults language to Danish, preserves the conversation when changed, and resets after reload", async () => {
-    const page = render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const page = render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const language = await screen.findByRole("combobox", { name: "Language" }) as HTMLSelectElement;
     expect(language.id).toBe("example-language");
     expect(language.value).toBe("da");
@@ -105,7 +137,7 @@ describe("ExamplesPage", () => {
       { role: "user", content: "First turn" }, { role: "assistant", content: "A useful reply" }, { role: "user", content: "Next turn" },
     ]]);
     page.unmount();
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     expect((await screen.findByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("da");
     expect(screen.queryByText("First turn")).toBeNull();
   });
@@ -114,7 +146,7 @@ describe("ExamplesPage", () => {
     installRecorder();
     installAudioUrls();
     apiMocks.transcribeAudio.mockResolvedValue({ text: "Good morning" });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.change(await screen.findByRole("combobox", { name: "Language" }), { target: { value: "en" } });
     expect(screen.getByText("Turn-based English voice input")).toBeTruthy();
     const push = screen.getByRole("button", { name: "Push to talk" });
@@ -135,7 +167,7 @@ describe("ExamplesPage", () => {
     installAudioUrls();
     let resolveChat: ((reply: { text: string; elapsed_ms: number }) => void) | undefined;
     apiMocks.sendChatTurn.mockImplementationOnce(() => new Promise((resolve) => { resolveChat = resolve; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const language = await screen.findByRole("combobox", { name: "Language" });
     fireEvent.click(screen.getByRole("checkbox", { name: "Speak replies automatically" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Danish turn" } });
@@ -161,7 +193,7 @@ describe("ExamplesPage", () => {
     const { getUserMedia, stream } = installRecorder();
     let allowMicrophone: ((stream: unknown) => void) | undefined;
     getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const language = await screen.findByRole("combobox", { name: "Language" });
     const push = screen.getByRole("button", { name: "Push to talk" });
     fireEvent.pointerDown(push);
@@ -188,13 +220,13 @@ describe("ExamplesPage", () => {
     ["recovery-required", "Recovery required"],
   ] as const)("renders the %s lifecycle state", async (state, label) => {
     apiMocks.getExamples.mockResolvedValue([makeStatus(state)]);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     expect(await screen.findByText(label)).toBeTruthy();
   });
 
   it("requires the narrator to start and shows voice as an optional paired dependency", async () => {
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped", { chat: "stopped", voice: "stopped" })]);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
 
     expect(await screen.findByText(/ddu-narrator is not ready/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start example" }).hasAttribute("disabled")).toBe(true);
@@ -207,7 +239,7 @@ describe("ExamplesPage", () => {
   });
 
   it("uses the selected fixed preset for a multi-turn chat and displays timing", async () => {
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     fireEvent.change(screen.getByRole("slider", { name: "Speed ↔ Quality" }), { target: { value: "2" } });
     expect(screen.getByText("Quality", { selector: "output" })).toBeTruthy();
@@ -230,7 +262,7 @@ describe("ExamplesPage", () => {
     apiMocks.sendChatTurn
       .mockRejectedValueOnce(new Error("temporary network failure"))
       .mockResolvedValueOnce({ text: "Recovered reply", elapsed_ms: 123, usage: {} });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
 
     const composer = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
@@ -251,7 +283,7 @@ describe("ExamplesPage", () => {
   it("shows live elapsed time and changes to still working after ten seconds", async () => {
     let resolveChat: ((result: { text: string; elapsed_ms: number; usage: Record<string, number> }) => void) | undefined;
     apiMocks.sendChatTurn.mockImplementation(() => new Promise((resolve) => { resolveChat = resolve; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     vi.useFakeTimers();
 
@@ -273,7 +305,7 @@ describe("ExamplesPage", () => {
   });
 
   it("cancels a chat request and retries without duplicating its pending turn", async () => {
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Earlier turn" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -334,7 +366,7 @@ describe("ExamplesPage", () => {
       transcriptionSignal = signal;
       resolveTranscription = resolve;
     }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const clear = await screen.findByRole("button", { name: "Clear session" }) as HTMLButtonElement;
     const pushToTalk = screen.getByRole("button", { name: "Push to talk" });
     fireEvent.pointerDown(pushToTalk);
@@ -362,7 +394,7 @@ describe("ExamplesPage", () => {
     let rejectStop: ((error: Error) => void) | undefined;
     apiMocks.getExamples.mockResolvedValueOnce([makeStatus("ready")]).mockResolvedValueOnce([makeStatus("stopping")]);
     apiMocks.stopExample.mockImplementation(() => new Promise((_resolve, reject) => { rejectStop = reject; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Stop example" }));
 
     expect(await screen.findByRole("button", { name: /Stopping/ })).toBeTruthy();
@@ -383,7 +415,7 @@ describe("ExamplesPage", () => {
       createObjectURL: vi.fn(() => "blob:spoken-reply"),
       revokeObjectURL: vi.fn(),
     });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Say hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -398,7 +430,7 @@ describe("ExamplesPage", () => {
     let resolveStart: ((status: ExamplePublicStatus) => void) | undefined;
     apiMocks.startExample.mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
     apiMocks.getExamples.mockResolvedValueOnce([makeStatus("stopped")]).mockResolvedValue([makeStatus("starting")]);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const start = await screen.findByRole("button", { name: "Start example" });
 
     fireEvent.click(start);
@@ -413,7 +445,7 @@ describe("ExamplesPage", () => {
     const onSessionExpired = vi.fn();
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
     apiMocks.startExample.mockRejectedValueOnce({ status: 409 });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={onSessionExpired} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={onSessionExpired} />);
     fireEvent.click(await screen.findByRole("button", { name: "Start example" }));
     expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/another dashboard activity/i);
 
@@ -425,7 +457,7 @@ describe("ExamplesPage", () => {
   it("shows CSRF and network failures without displaying server details", async () => {
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
     apiMocks.startExample.mockRejectedValueOnce({ status: 403 }).mockRejectedValueOnce(new Error("Failed to fetch"));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Start example" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/request verification failed/i);
     fireEvent.click(screen.getByRole("button", { name: "Start example" }));
@@ -435,7 +467,7 @@ describe("ExamplesPage", () => {
   it("prevents duplicate stop requests while a stop is pending", async () => {
     let resolveStop: ((status: ExamplePublicStatus) => void) | undefined;
     apiMocks.stopExample.mockImplementation(() => new Promise((resolve) => { resolveStop = resolve; }));
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const stop = await screen.findByRole("button", { name: "Stop example" });
     fireEvent.click(stop);
     expect(stop.hasAttribute("disabled")).toBe(true);
@@ -452,7 +484,7 @@ describe("ExamplesPage", () => {
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [] });
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.pointerDown(await screen.findByRole("button", { name: /push to talk/i }));
 
     const alert = await screen.findByRole("alert");
@@ -469,7 +501,7 @@ describe("ExamplesPage", () => {
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     const getUserMedia = vi.fn().mockRejectedValue(new Error("Permission denied"));
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
 
@@ -497,7 +529,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "" });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
@@ -526,7 +558,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "Godmorgen alle sammen" });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
     fireEvent.change(composer, { target: { value: "Typed before speaking" } });
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
@@ -562,7 +594,7 @@ describe("ExamplesPage", () => {
       value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
@@ -594,7 +626,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "Released outside" });
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await screen.findByRole("button", { name: "Release to transcribe" });
@@ -623,7 +655,7 @@ describe("ExamplesPage", () => {
       value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }) },
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
-    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     vi.useFakeTimers();
     await act(async () => {

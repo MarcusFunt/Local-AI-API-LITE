@@ -89,9 +89,12 @@ function DependencyRow({ title, detail, state }: { title: string; detail: string
   </div>;
 }
 
-export function ExamplesPage({ csrfToken, onSessionExpired }: {
+export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWorkspace, onReturnToCatalog }: {
   csrfToken: string;
   onSessionExpired: () => void;
+  workspace: boolean;
+  onOpenWorkspace: () => void;
+  onReturnToCatalog: () => void;
 }) {
   const [status, setStatus] = useState<ExamplePublicStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,6 +132,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const messageIdRef = useRef(0);
+  const openWorkspaceOnReadyRef = useRef(false);
 
   const setAudio = useCallback((nextUrl: string | null) => {
     if (audioUrlRef.current && audioUrlRef.current !== nextUrl) {
@@ -241,6 +245,16 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   }, [refresh, status]);
 
   useEffect(() => {
+    if (!openWorkspaceOnReadyRef.current || !status) return;
+    if (status.state === "ready") {
+      openWorkspaceOnReadyRef.current = false;
+      if (!workspace) onOpenWorkspace();
+    } else if (["failed", "recovery-required", "stopped", "stopping"].includes(status.state)) {
+      openWorkspaceOnReadyRef.current = false;
+    }
+  }, [onOpenWorkspace, status, workspace]);
+
+  useEffect(() => {
     if (chatStartedAt === null) return undefined;
     const updateElapsed = () => setChatElapsedMs(Math.max(0, Date.now() - chatStartedAt));
     const timer = window.setInterval(updateElapsed, 1000);
@@ -305,12 +319,14 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     setNotice(null);
     try {
       const next = await startExample(csrfToken);
+      openWorkspaceOnReadyRef.current = !workspace;
       setStatus(next);
       setMessages([]);
       setDraft("");
       setTranscriptReady(false);
       await refresh();
     } catch (cause) {
+      openWorkspaceOnReadyRef.current = false;
       const current = await refresh();
       setError(handleError(cause, "start"));
       if (current?.state === "recovery-required") setError("The controller needs to confirm the example container is stopped before retrying.");
@@ -321,6 +337,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
 
   const stop = async () => {
     if (pendingAction) return;
+    openWorkspaceOnReadyRef.current = false;
     cancelRecording(false);
     abortRequests();
     setMessages([]);
@@ -583,23 +600,28 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     }
   };
 
-  return <div className="page-content examples-content">
-    <section className="intro-panel examples-intro">
+  return <div className={`page-content examples-content${workspace ? " example-workspace" : ""}`}>
+    {workspace && <a className="workspace-return" href="/examples" onClick={(event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      onReturnToCatalog();
+    }}>Return to Examples</a>}
+    {!workspace && <section className="intro-panel examples-intro">
       <span className="eyebrow">ONE LOCAL HANDS-ON EXAMPLE</span>
       <h2>Try real tasks with your local model</h2>
       <p>Chat stays in this browser session. Push-to-talk is turn based: record, review the transcript, then send it with the conversation.</p>
-    </section>
+    </section>}
 
     <section className="panel example-card" aria-labelledby="example-title">
       <div className="example-card-heading">
-        <div><span className="eyebrow">EXAMPLE 01</span><h2 id="example-title">Chat + Voice</h2></div>
+        <div><span className="eyebrow">{workspace ? "LOCAL WORKSPACE" : "EXAMPLE 01"}</span>{workspace ? <h1 id="example-title">Chat + Voice</h1> : <h2 id="example-title">Chat + Voice</h2>}</div>
         {status ? <StateBadge state={status.state} /> : <span className="state-badge state-unknown">Loading</span>}
       </div>
       <p className="example-summary">{statusSummary}</p>
-      <div className="example-dependencies">
+      {!workspace && <div className="example-dependencies">
         <DependencyRow title="Chat model" detail={chatDependencyDetail} state={status?.chat_dependency.state ?? "unknown"} />
         <DependencyRow title="Speech services" detail={voiceDependencyDetail} state={status?.voice_dependency.state ?? "unknown"} />
-      </div>
+      </div>}
       {status?.state === "ready" && <div className="example-idle-note">Idle stop: {formatDate(status.idle_expires_at)} · Stops after 30 minutes without app requests.</div>}
       {status?.started_at && status.state !== "stopped" && <div className="example-started-note">Started {formatDate(status.started_at)}</div>}
       {status && !status.activity_available && status.state !== "ready" && <div className="example-started-note">Another dashboard activity is active. Finish it before starting this example.</div>}
@@ -608,6 +630,11 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       {notice && <p className="example-notice" role="status">{notice}</p>}
       {status?.last_error_category && <p className="example-error" role="status">{FAILURE_COPY[status.last_error_category] ?? "The example needs recovery. Refresh status before retrying."}</p>}
       <div className="example-actions">
+        {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          onOpenWorkspace();
+        }}>Open Chat + Voice</a>}
         <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
           {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
         </button>
