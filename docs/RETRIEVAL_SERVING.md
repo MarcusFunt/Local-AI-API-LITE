@@ -116,7 +116,7 @@ Compose ceilings are 4 CPUs / 5 GiB for embedding and 2 CPUs / 4 GiB for reranki
 
 Model-free CI injects fake adapters and checks schemas, bounds, output ordering, finite values, readiness/error sanitization, queue overload, and Compose structure. It must not download model weights or require a GPU. Compose checks must preserve root vLLM configuration, external network usage and aliases, and prove no published inference ports, GPU request, `depends_on`, or restart policy were added.
 
-The local operator acceptance below exercised real Danish requests and confirmed the existing LLM remained healthy. Retrieval quality against labeled history queries, sustained load, memory-pressure behavior, generator impact under actual generation, and service lifecycle controls remain unaccepted.
+The local operator acceptance below exercised real Danish requests and confirmed the existing LLM remained healthy. A provisional v3.1 corpus retrieval/citation pilot is recorded below. Independently labeled retrieval quality, semantic citation entailment, sustained load, memory-pressure behavior, and service lifecycle controls remain unaccepted.
 
 ## Local operator acceptance — 2026-10-30
 
@@ -126,6 +126,32 @@ The local operator acceptance below exercised real Danish requests and confirmed
 - An ephemeral client on `ddu_inference_bus` called both real inference endpoints. A Danish embedding query returned a finite 1,024-dimensional unit vector in 0.26 seconds. A Danish reranking query over three candidate passages returned two finite, descending relevance scores with original indices in 0.12 seconds. These were one warm request per endpoint, not a benchmark or retrieval-quality evaluation.
 - After both workers were ready, `docker stats` reported 2.564 GiB for embedding (5 GiB limit) and 1.719 GiB for reranking (4 GiB limit); Windows showed 5.3 GiB free physical memory. The existing `local-ai-api-lite-vllm-1` remained healthy at 3.536 GiB, and an HTTP 200 `GET /v1/models` through `ddu-llm` returned `ddu-narrator`. No generation request or GPU benchmark was run.
 - The operator asked to leave both retrieval workers running after the smoke acceptance.
+
+## Authentic corpus retrieval and citation pilot — 2026-10-30
+
+- Corpus: the authentic v3.1 SQLite FTS5 index from the user-provided complete bundle. The evaluator verifies the index against both bundle manifests and opens it read-only. It does not read any v2.0 query, passage, or judgment data.
+- Pipeline: FTS5/BM25 searches all 78,053 passages, the live `ddu-rerank` worker reranks up to 20 candidates, and live `ddu-narrator` generates from the top 12 passage results. The supplied index is lexical; this pilot does not use `ddu-embed` or a dense-vector corpus index.
+- Pilot labels: eight source-derived Danish questions with one or two specifically selected target passages each. The set is provisional and is not exhaustive relevance annotation.
+- Run the isolated, read-only client from PowerShell after both retrieval workers and vLLM are healthy:
+
+  ```powershell
+  $bundlePath = (Resolve-Path 'C:\path\to\danish_history_complete_bundle_v3_1.zip').Path.Replace('\','/')
+  $scriptPath = (Resolve-Path .\scripts).Path.Replace('\','/')
+  $outputPath = (New-Item -ItemType Directory -Force .\benchmark-output).FullName.Replace('\','/')
+  docker run --rm --network ddu_inference_bus --read-only --cpus=1 --memory=1g `
+    --tmpfs /tmp:rw,noexec,nosuid,size=512m -e PYTHONDONTWRITEBYTECODE=1 `
+    --mount "type=bind,source=$scriptPath,target=/app,readonly" `
+    --mount "type=bind,source=$bundlePath,target=/data/dataset.zip,readonly" `
+    --mount "type=bind,source=$outputPath,target=/results" `
+    local-ai-api-lite-retrieval:0.1.0 python /app/danish_history_rag_eval.py `
+    --bundle /data/dataset.zip --queries /app/danish_history_v3_1_pilot.jsonl `
+    --output /results/danish-history-v3.1-evaluation.json
+  ```
+
+- Observed known-target passage success: BM25 hit@5 `0.625` and hit@20 `0.875`; after reranking hit@5 `0.500`, hit@10 `0.688`, hit@20 `0.875`, mean reciprocal rank `0.479`.
+- Generation: all eight responses parsed as JSON. Six yielded at least one claim with a citation in the retrieved context and a verbatim quote; two were safely reduced to an abstention. Five of eight cited answers included a passage from the designated target letter. One query was not retrieved in the top 50.
+- Citation checks establish that passage IDs resolve to retrieved text and quoted spans occur verbatim in that passage. They do not prove that a paraphrase answers the question. Spot review found a date-only response for the folk-high-school question and a wrong-year letter for the Bjørnson question, despite exact quotation/citation checks. Treat these results as an integration pilot, not a semantic-grounding pass.
+- The generated report is written to ignored `benchmark-output/danish-history-v3.1-evaluation.json`. Dense retrieval was not exercised; a full corpus vector index and independent exhaustive qrels are still needed for a stronger quality evaluation.
 
 The history/game backend owns source ingestion, chunking, vector storage, hybrid retrieval, citations, and gameplay. No database access, dashboard lifecycle UI, game integration, TTS, or STT is part of M0–M2.
 
