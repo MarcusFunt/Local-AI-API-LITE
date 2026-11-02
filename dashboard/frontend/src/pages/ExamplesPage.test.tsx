@@ -85,6 +85,161 @@ describe("ExamplesPage", () => {
     ready();
   });
 
+  it.each([
+    "Explain how a local AI model works.",
+    "Help me plan a small coding project.",
+    "Give me three ideas to try in this chat.",
+  ])("fills the composer with '%s' without sending", async (prompt) => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole("button", { name: prompt }));
+    expect(composer.value).toBe(prompt);
+    expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
+    expect(screen.queryByRole("article", { name: "Your message" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("names each message by its speaker and removes starters after sending", async () => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" });
+    fireEvent.change(composer, { target: { value: "My local question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("article", { name: "Assistant reply" })).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Your message" })).getByText("My local question")).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Assistant reply" })).getByText("A useful reply")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Explain how a local AI model works." })).toBeNull();
+  });
+
+  it("keeps a long reply intact with its timing and working speech action", async () => {
+    installAudioUrls();
+    const longReply = `First paragraph.\n\n${"A detailed local answer. ".repeat(100)}\n${"x".repeat(300)}\nFinal sentence.`;
+    apiMocks.sendChatTurn.mockResolvedValue({ text: longReply, elapsed_ms: 876, usage: {} });
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "Message" }), { target: { value: "Explain in detail" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    const reply = within(await screen.findByRole("article", { name: "Assistant reply" }));
+    expect(reply.getByText((_, element) => element?.tagName === "P" && element.textContent === longReply)).toBeTruthy();
+    expect(reply.getByText("876 ms")).toBeTruthy();
+    const speak = reply.getByRole("button", { name: "Speak reply" }) as HTMLButtonElement;
+    expect(speak.disabled).toBe(false);
+    fireEvent.click(speak);
+    expect(await screen.findByLabelText("Spoken reply audio")).toBeTruthy();
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", longReply, "da", expect.any(AbortSignal));
+  });
+
+  it("announces a timeout-style failure and restores the prompt for retry", async () => {
+    apiMocks.sendChatTurn.mockRejectedValue(new Error("Request timed out"));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "A request that times out" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Your message is back in the composer so you can retry.");
+    expect(composer.value).toBe("A request that times out");
+    expect(screen.queryByRole("timer")).toBeNull();
+  });
+
+  it.each([
+    { state: "stopped", label: "Stopped", start: "Start example", startDisabled: false, stop: null },
+    { state: "ready", label: "Ready", start: null, startDisabled: false, stop: "Stop example" },
+    { state: "starting", label: "Preparing", start: null, startDisabled: false, stop: "Stop example" },
+    { state: "stopping", label: "Stopping", start: null, startDisabled: false, stop: "Stopping…" },
+    { state: "failed", label: "Failed", start: "Retry start", startDisabled: false, stop: "Stop example" },
+    { state: "recovery-required", label: "Recovery required", start: null, startDisabled: false, stop: "Stop example" },
+  ] as const)("exposes $state status and relevant lifecycle actions in the workspace header", async ({ state, label, start, startDisabled, stop }) => {
+    apiMocks.getExamples.mockResolvedValue([makeStatus(state)]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
+    expect(await workspace.findByText(label, { exact: true })).toBeTruthy();
+    expect(workspace.getByRole("heading", { level: 1, name: "Chat + Voice" })).toBeTruthy();
+    if (start) {
+      expect((workspace.getByRole("button", { name: start }) as HTMLButtonElement).disabled).toBe(startDisabled);
+    } else {
+      expect(workspace.queryByRole("button", { name: /^(Start example|Retry start)$/ })).toBeNull();
+    }
+    if (stop) {
+      expect((workspace.getByRole("button", { name: stop }) as HTMLButtonElement).disabled).toBe(state === "stopping");
+    } else {
+      expect(workspace.queryByRole("button", { name: /^(Stop example|Stopping…)$/ })).toBeNull();
+    }
+    expect((workspace.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("politely announces workspace lifecycle changes", async () => {
+    apiMocks.getExamples
+      .mockResolvedValueOnce([makeStatus("starting")])
+      .mockResolvedValueOnce([makeStatus("ready")]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
+    await workspace.findByText("Preparing", { exact: true });
+    const lifecycleStatus = workspace.getByRole("status");
+
+    expect(lifecycleStatus.textContent).toContain("Preparing");
+    expect(lifecycleStatus.getAttribute("aria-live")).toBe("polite");
+    fireEvent.click(workspace.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(lifecycleStatus.textContent).toContain("Ready"));
+    expect(await workspace.findByRole("status")).toBe(lifecycleStatus);
+  });
+
+  it("keeps text chat usable and explains stopped voice dependencies in the workspace", async () => {
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready", { voice: "stopped" })]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const message = await screen.findByRole("textbox", { name: "Message" });
+    expect((message as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Push to talk" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Chat is ready while push-to-talk and spoken replies wait for both ddu-stt and ddu-tts/)).toBeTruthy();
+    fireEvent.change(message, { target: { value: "Text still works" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("A useful reply")).toBeTruthy();
+  });
+
+  it("discloses workspace dependencies and recovery guidance only when service details are expanded", async () => {
+    apiMocks.getExamples.mockResolvedValue([{ ...makeStatus("recovery-required"), last_error_category: "recovery_required" }]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Recovery required");
+    const summary = screen.getByText("Services and status details", { selector: "summary" });
+    const disclosure = summary.closest("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(true);
+    expect(within(disclosure).getByText("Chat model")).toBeTruthy();
+    expect(within(disclosure).getByText("Speech services")).toBeTruthy();
+    expect(within(disclosure).getByRole("status").textContent).toMatch(/confirm the container state before another start/);
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(false);
+  });
+
+  it("keeps workspace controls keyboard reachable and labels live voice feedback", async () => {
+    installRecorder();
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByRole("textbox", { name: "Message" });
+
+    const focusableControls = [
+      screen.getByText("Services and status details", { selector: "summary" }),
+      screen.getByRole("combobox", { name: "Language" }),
+      screen.getByRole("radio", { name: "Balanced" }),
+      screen.getByRole("textbox", { name: "Message" }),
+      screen.getByRole("button", { name: "Stop example" }),
+      screen.getByRole("button", { name: "Push to talk" }),
+    ];
+    for (const control of focusableControls) {
+      expect((control as HTMLElement).tabIndex).not.toBe(-1);
+    }
+
+    const pushToTalk = focusableControls.at(-1) as HTMLButtonElement;
+    pushToTalk.focus();
+    expect(document.activeElement).toBe(pushToTalk);
+    fireEvent.keyDown(pushToTalk, { key: "Enter" });
+
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    const voiceStatus = screen.getByRole("status", { name: "Voice input status" });
+    expect(voiceStatus.getAttribute("aria-live")).toBe("polite");
+    expect(voiceStatus.textContent).toBe("Recording");
+    expect(document.querySelector(".recording-dot")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" }).getAttribute("aria-live")).toBe("off");
+    fireEvent.keyUp(pushToTalk, { key: "Enter" });
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for a successful catalog start to become ready before opening the workspace", async () => {
     const onOpenWorkspace = vi.fn();
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
@@ -292,8 +447,8 @@ describe("ExamplesPage", () => {
   it("uses the selected fixed preset for a multi-turn chat and displays timing", async () => {
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByRole("button", { name: "Send message" });
-    fireEvent.change(screen.getByRole("slider", { name: "Speed ↔ Quality" }), { target: { value: "2" } });
-    expect(screen.getByText("Quality", { selector: "output" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Quality" }));
+    expect((screen.getByRole("radio", { name: "Quality" }) as HTMLInputElement).checked).toBe(true);
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Compare two ideas" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -307,6 +462,104 @@ describe("ExamplesPage", () => {
       [{ role: "user", content: "Compare two ideas" }],
     ]);
     expect(screen.getByText(/does not guarantee correctness/i)).toBeTruthy();
+  });
+
+  it.each([
+    ["da", "Fast", "fast"],
+    ["da", "Balanced", "balanced"],
+    ["da", "Quality", "quality"],
+    ["en", "Fast", "fast"],
+    ["en", "Balanced", "balanced"],
+    ["en", "Quality", "quality"],
+  ])("keeps %s language and %s depth through an edited voice turn", async (language, label, preset) => {
+    installRecorder();
+    installAudioUrls();
+    apiMocks.transcribeAudio.mockResolvedValue({ text: "Draft transcript" });
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Language" }), { target: { value: language } });
+    const depth = screen.getByRole("radiogroup", { name: "Response depth" });
+    expect(within(depth).getAllByRole("radio")).toHaveLength(3);
+    expect((within(depth).getByRole("radio", { name: "Balanced" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(depth).getByRole("radio", { name: label }));
+    expect((within(depth).getByRole("radio", { name: label }) as HTMLInputElement).checked).toBe(true);
+    const dock = screen.getByRole("region", { name: "Message and voice composer" });
+    fireEvent.click(within(dock).getByRole("checkbox", { name: "Speak replies automatically" }));
+    const push = within(dock).getByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    const composer = within(dock).getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(composer.value).toBe("Draft transcript"));
+    expect(composer.disabled).toBe(false);
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledWith("csrf-value", expect.any(Blob), language, expect.any(AbortSignal));
+    expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
+    fireEvent.change(composer, { target: { value: "Reviewed transcript" } });
+    fireEvent.click(within(dock).getByRole("button", { name: "Send message" }));
+    await screen.findByLabelText("Spoken reply audio");
+    expect(apiMocks.sendChatTurn).toHaveBeenCalledWith("csrf-value", language, preset, [{ role: "user", content: "Reviewed transcript" }], expect.any(AbortSignal));
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", language, expect.any(AbortSignal));
+  });
+
+  it("times only active capture and announces transcription politely after release", async () => {
+    const { getUserMedia, stream } = installRecorder();
+    let allowMicrophone!: (stream: unknown) => void;
+    let finishTranscription!: (transcript: { text: string }) => void;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
+    apiMocks.transcribeAudio.mockImplementationOnce(() => new Promise((resolve) => { finishTranscription = resolve; }));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Push to talk" });
+    vi.useFakeTimers();
+    fireEvent.pointerDown(push);
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(screen.queryByRole("timer")).toBeNull();
+    await act(async () => { allowMicrophone(stream); });
+    const status = screen.getByRole("status", { name: "Voice input status" });
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toMatch(/recording/i);
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:03" }).getAttribute("aria-live")).toBe("off");
+    fireEvent.pointerUp(push);
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(status.textContent).toMatch(/transcribing/i);
+    await act(async () => { finishTranscription({ text: "Ready for review" }); });
+    expect(status.textContent).toMatch(/ready to record/i);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(screen.queryByRole("timer")).toBeNull();
+    await act(async () => { fireEvent.pointerDown(push); });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    fireEvent.pointerCancel(push);
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(status.textContent).toMatch(/ready to record/i);
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([" ", "Enter"])("records while holding %j and ends capture on key release", async (key) => {
+    installRecorder();
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Push to talk" });
+    fireEvent.keyDown(push, { key });
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    fireEvent.keyUp(push, { key });
+    await screen.findByRole("button", { name: "Push to talk" });
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Escape", "blur", "pointercancel"])("returns recording to idle and discards audio on %s", async (action) => {
+    installRecorder();
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
+    if (action === "Escape") fireEvent.keyDown(window, { key: "Escape" });
+    else if (action === "blur") fireEvent.blur(push);
+    else fireEvent.pointerCancel(window);
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toMatch(/ready to record/i);
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
 
   it("restores a failed prompt to the composer so retry does not include an unanswered turn", async () => {
@@ -341,10 +594,12 @@ describe("ExamplesPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "A slow request" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(screen.getByText("Waiting for a complete reply from the local model.")).toBeTruthy();
+    expect(screen.getByText("Waiting for a complete reply from the local model.").getAttribute("role")).toBe("status");
+    expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toBe("Voice controls paused during chat");
+    expect(document.querySelector(".chat-request-spinner")?.getAttribute("aria-hidden")).toBe("true");
     expect(screen.getByRole("timer", { name: "Elapsed time 00:00" })).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(10_000); });
-    expect(screen.getByText("Still working on your reply.")).toBeTruthy();
+    expect(screen.getByText("Still working on your reply.").getAttribute("role")).toBe("status");
     expect(screen.getByRole("timer", { name: "Elapsed time 00:10" })).toBeTruthy();
 
     await act(async () => {
@@ -563,6 +818,7 @@ describe("ExamplesPage", () => {
     fireEvent.pointerDown(pushToTalk);
 
     expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/allow microphone access.*browser settings/i);
+    expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toBe("Voice needs attention");
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
