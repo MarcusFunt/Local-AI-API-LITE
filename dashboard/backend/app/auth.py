@@ -404,14 +404,16 @@ def require_csrf(
     request: Request,
     session: Annotated[AuthSession, Depends(require_session)],
 ) -> AuthSession:
-    validate_local_request(request)
+    validate_local_request(request, allow_trusted_tailscale_origin=True)
     service: AuthService = request.app.state.auth_service
     if not service.csrf_matches(session, request.headers.get("X-CSRF-Token")):
         raise HTTPException(status_code=403, detail="Request verification failed")
     return session
 
 
-def validate_local_request(request: Request) -> None:
+def validate_local_request(
+    request: Request, *, allow_trusted_tailscale_origin: bool = False
+) -> None:
     host = request.headers.get("host", "")
     origin = request.headers.get("origin", "")
     try:
@@ -422,7 +424,10 @@ def validate_local_request(request: Request) -> None:
         valid = (
             (
                 request_url.hostname in {"localhost", "127.0.0.1", "::1"}
-                or request_origin in configured_origins
+                or (
+                    allow_trusted_tailscale_origin
+                    and request_origin in configured_origins
+                )
             )
             and request_url.netloc.casefold() == host.casefold()
             and origin_url.netloc.casefold() == host.casefold()

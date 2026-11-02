@@ -81,7 +81,7 @@ def setup(body: SetupRequest, request: Request) -> Response:
 
 @router.post("/login")
 def login(body: LoginRequest, request: Request) -> Response:
-    validate_local_request(request)
+    validate_local_request(request, allow_trusted_tailscale_origin=True)
     client_key = request.client.host if request.client else "unknown"
     try:
         result = _service(request).login(body.password, client_key)

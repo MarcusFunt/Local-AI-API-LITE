@@ -155,6 +155,17 @@ def test_login_accepts_only_configured_tailscale_origin(tmp_path, monkeypatch):
     assert "secure" in login.headers["set-cookie"].casefold()
 
 
+def test_initial_setup_remains_loopback_only_when_tailscale_is_trusted(tmp_path, monkeypatch):
+    origin = "https://marcus-computer.example.ts.net:10000"
+    monkeypatch.setenv("DASHBOARD_TRUSTED_ORIGINS", origin)
+    tailscale_client = _client(tmp_path, base_url=origin)
+
+    setup = tailscale_client.post("/auth/setup", json_body={"password": PASSWORD})
+
+    assert setup.status_code == 403
+    assert tailscale_client.get("/auth/state").json()["setup_required"] is True
+
+
 def test_tailscale_origin_allowlist_does_not_trust_other_ports(tmp_path, monkeypatch):
     monkeypatch.setenv("DASHBOARD_TRUSTED_ORIGINS", "https://marcus-computer.example.ts.net:10000")
     local_client = _client(tmp_path)
