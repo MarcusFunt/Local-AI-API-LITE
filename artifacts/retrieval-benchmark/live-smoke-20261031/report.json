@@ -1,0 +1,308 @@
+{
+  "metadata": {
+    "client_requests_per_second": 0.534,
+    "concurrency": 1,
+    "cpu_count": 20,
+    "duration_seconds": 7.494,
+    "expected_container_images": {
+      "narrator": "vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+      "retrieval": "local-ai-api-lite-retrieval:0.1.0 (local image tag; inspect its local image ID separately)"
+    },
+    "fixture_sha256": "d32c049d6d546618302b62a874429bf08931e6cb258b9ee9195d90cbaa70aad2",
+    "fixture_version": "synthetic-danish-inference-v1",
+    "max_queries": 1,
+    "measurement_note": "Cold process/model loading is not triggered by this runner. For cold measurements, start the runner first and issue a separately authorized Compose start from another terminal; warm mode measures already-ready services.",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "prompt_version": "transport-json-v1",
+    "python_version": "3.11.4",
+    "readiness": {
+      "aggregate_worker_counters": {
+        "embed": {
+          "accepted_total": null,
+          "completed_total": null,
+          "failed_total": null,
+          "rejected_total": null,
+          "timed_out_total": null
+        },
+        "rerank": {
+          "accepted_total": null,
+          "completed_total": null,
+          "failed_total": null,
+          "rejected_total": null,
+          "timed_out_total": null
+        }
+      },
+      "last_worker_metrics": {
+        "embed": null,
+        "rerank": null
+      },
+      "readiness_failures": 0,
+      "readiness_observations": 6,
+      "worker_metrics_samples": {
+        "embed": 0,
+        "rerank": 0
+      }
+    },
+    "repeats": 1,
+    "resources": {
+      "containers": {
+        "embed": {
+          "cpu_percent_peak": 118.47,
+          "memory_limit_bytes": 5368709120.0,
+          "memory_used_bytes_peak": 3470333575.168,
+          "samples": 2
+        },
+        "narrator": {
+          "cpu_percent_peak": 25.05,
+          "memory_limit_bytes": 31535797370.88,
+          "memory_used_bytes_peak": 3937411268.608,
+          "samples": 2
+        },
+        "rerank": {
+          "cpu_percent_peak": 0.14,
+          "memory_limit_bytes": 4294967296.0,
+          "memory_used_bytes_peak": 1919850381.312,
+          "samples": 2
+        }
+      },
+      "dashboard_process": {
+        "availability": "unavailable",
+        "cpu_percent_peak": null,
+        "memory_used_bytes_peak": null,
+        "pid": null,
+        "samples": 0
+      },
+      "docker_available": true,
+      "gpu_device_wide": {
+        "memory_total_bytes": 12884901888.0,
+        "memory_used_bytes_peak": 11072962560.0,
+        "samples": 2,
+        "utilization_percent_peak": 100.0
+      },
+      "host_measurement_note": "Container stats are per-container; GPU values are device-wide and cannot be attributed to one service.",
+      "host_ram_available_bytes_min": 6886793216.0,
+      "host_ram_total_bytes": 34116288512.0,
+      "host_ram_used_bytes_peak": 27229495296.0,
+      "runtime_identities": {
+        "embed": {
+          "availability": "available",
+          "compose_project": "local-ai-api-lite-retrieval",
+          "compose_service": "embed",
+          "container_name": "local-ai-api-lite-retrieval-embed-1",
+          "image_id": "sha256:76b81c69aabf7cafdd41d11a6ddad2cf896ea154d53cf8898f4f67f79b5461a0",
+          "image_ref": "local-ai-api-lite-retrieval:0.1.0",
+          "runtime_state": "running"
+        },
+        "narrator": {
+          "availability": "available",
+          "compose_project": "local-ai-api-lite",
+          "compose_service": "vllm",
+          "container_name": "local-ai-api-lite-vllm-1",
+          "image_id": "sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+          "image_ref": "vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+          "runtime_state": "running"
+        },
+        "rerank": {
+          "availability": "available",
+          "compose_project": "local-ai-api-lite-retrieval",
+          "compose_service": "rerank",
+          "container_name": "local-ai-api-lite-retrieval-rerank-1",
+          "image_id": "sha256:76b81c69aabf7cafdd41d11a6ddad2cf896ea154d53cf8898f4f67f79b5461a0",
+          "image_ref": "local-ai-api-lite-retrieval:0.1.0",
+          "runtime_state": "running"
+        }
+      }
+    },
+    "run_mode": "warm",
+    "runtime_container_identities": {
+      "embed": {
+        "availability": "available",
+        "compose_project": "local-ai-api-lite-retrieval",
+        "compose_service": "embed",
+        "container_name": "local-ai-api-lite-retrieval-embed-1",
+        "image_id": "sha256:76b81c69aabf7cafdd41d11a6ddad2cf896ea154d53cf8898f4f67f79b5461a0",
+        "image_ref": "local-ai-api-lite-retrieval:0.1.0",
+        "runtime_state": "running"
+      },
+      "narrator": {
+        "availability": "available",
+        "compose_project": "local-ai-api-lite",
+        "compose_service": "vllm",
+        "container_name": "local-ai-api-lite-vllm-1",
+        "image_id": "sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+        "image_ref": "vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+        "runtime_state": "running"
+      },
+      "rerank": {
+        "availability": "available",
+        "compose_project": "local-ai-api-lite-retrieval",
+        "compose_service": "rerank",
+        "container_name": "local-ai-api-lite-retrieval-rerank-1",
+        "image_id": "sha256:76b81c69aabf7cafdd41d11a6ddad2cf896ea154d53cf8898f4f67f79b5461a0",
+        "image_ref": "local-ai-api-lite-retrieval:0.1.0",
+        "runtime_state": "running"
+      }
+    },
+    "services": {
+      "after_run": {
+        "embed": {
+          "alias": "ddu-embed",
+          "expected_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+          "readiness_endpoint": "/ready",
+          "readiness_wait_seconds": 0.015,
+          "ready": true,
+          "reported_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+          "revision_verified": true
+        },
+        "narrator": {
+          "alias": "ddu-narrator",
+          "expected_revision": "7a613872f394578b0b52b683ff4ac47516b4bcaf",
+          "readiness_endpoint": "/health",
+          "readiness_wait_seconds": 0.0,
+          "ready": true,
+          "reported_revision": null,
+          "revision_verified": false
+        },
+        "rerank": {
+          "alias": "ddu-rerank",
+          "expected_revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+          "readiness_endpoint": "/ready",
+          "readiness_wait_seconds": 0.0,
+          "ready": true,
+          "reported_revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+          "revision_verified": true
+        }
+      },
+      "startup": {
+        "embed": {
+          "alias": "ddu-embed",
+          "expected_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+          "readiness_endpoint": "/ready",
+          "readiness_wait_seconds": 0.0,
+          "ready": true,
+          "reported_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+          "revision_verified": true
+        },
+        "narrator": {
+          "alias": "ddu-narrator",
+          "expected_revision": "7a613872f394578b0b52b683ff4ac47516b4bcaf",
+          "readiness_endpoint": "/health",
+          "readiness_wait_seconds": 0.016,
+          "ready": true,
+          "reported_revision": null,
+          "revision_verified": false
+        },
+        "rerank": {
+          "alias": "ddu-rerank",
+          "expected_revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+          "readiness_endpoint": "/ready",
+          "readiness_wait_seconds": 0.0,
+          "ready": true,
+          "reported_revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+          "revision_verified": true
+        }
+      }
+    },
+    "stability_seconds_requested": 0,
+    "stability_stop_reason": null,
+    "started_at": "2026-10-31T21:44:51Z",
+    "startup_readiness_wait_seconds": {
+      "embed": 0.0,
+      "narrator": 0.016,
+      "rerank": 0.0,
+      "total": 0.016
+    },
+    "timeout_seconds": 60.0,
+    "warmup_pipeline_requests": 0
+  },
+  "summary": {
+    "embedding-only": {
+      "completion_tokens": 0,
+      "completion_tokens_per_second": 0.0,
+      "errors": 0,
+      "requests": 1,
+      "stages_ms": {
+        "embedding": {
+          "p50": 664.331,
+          "p95": 664.331
+        }
+      },
+      "success_rate": 1.0,
+      "successes": 1,
+      "timeout_errors": 0,
+      "total_ms": {
+        "p50": 664.332,
+        "p95": 664.332
+      }
+    },
+    "generation-only": {
+      "completion_tokens": 34,
+      "completion_tokens_per_second": 34.234,
+      "errors": 0,
+      "requests": 1,
+      "stages_ms": {
+        "generation": {
+          "p50": 992.879,
+          "p95": 992.879
+        }
+      },
+      "success_rate": 1.0,
+      "successes": 1,
+      "timeout_errors": 0,
+      "total_ms": {
+        "p50": 992.88,
+        "p95": 992.88
+      }
+    },
+    "pipeline": {
+      "completion_tokens": 34,
+      "completion_tokens_per_second": 24.509,
+      "errors": 0,
+      "requests": 1,
+      "stages_ms": {
+        "dense_rank": {
+          "p50": 0.149,
+          "p95": 0.149
+        },
+        "embedding": {
+          "p50": 609.029,
+          "p95": 609.029
+        },
+        "generation": {
+          "p50": 632.743,
+          "p95": 632.743
+        },
+        "reranking": {
+          "p50": 144.996,
+          "p95": 144.996
+        }
+      },
+      "success_rate": 1.0,
+      "successes": 1,
+      "timeout_errors": 0,
+      "total_ms": {
+        "p50": 1386.92,
+        "p95": 1386.92
+      }
+    },
+    "reranking-only": {
+      "completion_tokens": 0,
+      "completion_tokens_per_second": 0.0,
+      "errors": 0,
+      "requests": 1,
+      "stages_ms": {
+        "reranking": {
+          "p50": 143.191,
+          "p95": 143.191
+        }
+      },
+      "success_rate": 1.0,
+      "successes": 1,
+      "timeout_errors": 0,
+      "total_ms": {
+        "p50": 143.192,
+        "p95": 143.192
+      }
+    }
+  }
+}

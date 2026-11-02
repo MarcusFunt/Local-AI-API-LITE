@@ -1,0 +1,35 @@
+{
+  "fixture_version": "synthetic-danish-inference-v1",
+  "prompt_version": "transport-json-v1",
+  "description": "Invented non-historical content for API and pipeline transport tests only.",
+  "system_prompt": "You are validating an invented transport fixture. The supplied material is fictional test data and makes no claim about real people, events, or history. Reply with JSON matching the requested schema. Use only supplied candidate evidence.",
+  "questions": [
+    {
+      "id": "synthetic-01",
+      "query": "Hvilken farve havde markørerne i det fiktive forsøgsarkiv?",
+      "candidates": [
+        {"id": "synthetic-01-a", "text": "I det opdigtede forsøgsarkiv lagde møntmester Ada tre blå markører på bordet i Testby."},
+        {"id": "synthetic-01-b", "text": "Det fiktive testnotat fortæller, at en grøn lampe lyste ved døren i Prøveby."},
+        {"id": "synthetic-01-c", "text": "I det konstruerede scenarie blev en gul kuvert lagt ved broen."}
+      ]
+    },
+    {
+      "id": "synthetic-02",
+      "query": "Hvor blev den fiktive kuvert lagt?",
+      "candidates": [
+        {"id": "synthetic-02-a", "text": "I det konstruerede scenarie blev en gul kuvert lagt ved broen."},
+        {"id": "synthetic-02-b", "text": "Det opdigtede arkiv siger, at Ada flyttede en blå markør til bordet."},
+        {"id": "synthetic-02-c", "text": "Et fiktivt testkort nævner en grøn lampe ved døren i Prøveby."}
+      ]
+    },
+    {
+      "id": "synthetic-03",
+      "query": "Hvilken genstand lyste ved døren i det opdigtede notat?",
+      "candidates": [
+        {"id": "synthetic-03-a", "text": "Det fiktive testnotat fortæller, at en grøn lampe lyste ved døren i Prøveby."},
+        {"id": "synthetic-03-b", "text": "I det konstruerede scenarie blev en gul kuvert lagt ved broen."},
+        {"id": "synthetic-03-c", "text": "I det opdigtede forsøgsarkiv lagde møntmester Ada tre blå markører på bordet i Testby."}
+      ]
+    }
+  ]
+}

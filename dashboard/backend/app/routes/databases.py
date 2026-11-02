@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.auth import AuthSession, require_csrf, require_session
+from app.auth import (
+    AuthenticationError,
+    AuthSession,
+    LoginRateLimitedError,
+    require_csrf,
+    require_session,
+)
 from app.databases import DATABASE_MONITOR_INTEGRATION, DATABASE_MONITOR_PURPOSE
 from app.persistence import MetadataStoreError
 from app.secrets_store import VaultAccessError, VaultLockedError
@@ -38,6 +44,12 @@ class DatabaseUpdateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=80)
     dsn: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class DatabaseRevealRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(min_length=1, max_length=256)
 
 
 def _clean_name(raw: str) -> str:
@@ -209,14 +221,21 @@ def check_database(
 @router.post("/{database_id}/reveal")
 def reveal_database_credential(
     database_id: str,
+    body: DatabaseRevealRequest,
     request: Request,
-    _session: Annotated[AuthSession, Depends(require_csrf)],
+    session: Annotated[AuthSession, Depends(require_csrf)],
 ) -> JSONResponse:
     if _database_metadata(request, database_id) is None:
         raise HTTPException(status_code=404, detail="Database monitor was not found")
     try:
+        client_key = request.client.host if request.client else "unknown"
+        request.app.state.auth_service.reauthenticate_sensitive_action(session, body.password, client_key)
         token = request.app.state.secret_store.issue_reveal(database_id)
         credential = request.app.state.secret_store.consume_reveal(token)
+    except LoginRateLimitedError:
+        raise HTTPException(status_code=429, detail="Authentication failed") from None
+    except AuthenticationError:
+        raise HTTPException(status_code=401, detail="Authentication failed") from None
     except (VaultAccessError, VaultLockedError, MetadataStoreError, OSError, RuntimeError):
         raise _unavailable() from None
     return JSONResponse(

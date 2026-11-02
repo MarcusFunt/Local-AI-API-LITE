@@ -1,0 +1,8 @@
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+fastapi==0.162.0
+uvicorn==0.54.0
+transformers==4.57.6
+huggingface-hub==0.36.2
+torch==2.7.0+cpu

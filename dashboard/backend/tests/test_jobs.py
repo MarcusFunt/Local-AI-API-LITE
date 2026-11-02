@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from conftest import load_dashboard_module
@@ -130,6 +131,50 @@ def test_job_timeout_and_cancel_are_recorded(tmp_path):
     cancel_record = wait_for_terminal(runner, cancelled["job_id"])
     assert cancel_record["state"] == "cancelled"
     assert cancel_record["error_category"] == "cancelled_by_operator"
+
+
+def test_unconfirmed_container_stop_keeps_gate_blocked_until_reconciled(tmp_path):
+    class UnconfirmedStopAdapter:
+        def __init__(self):
+            self.started = threading.Event()
+            self.container_stopped = False
+            self.reconciliation_calls = []
+
+        def run(self, _job_id, _options, *, artifact_path, timeout_seconds, cancel_event):
+            self.started.set()
+            cancel_event.wait(timeout=2)
+            return SimpleNamespace(return_code=130, stdout="{}", container_stopped=False)
+
+        def ensure_container_stopped(self, job_id):
+            self.reconciliation_calls.append(job_id)
+            return self.container_stopped
+
+    command = UnconfirmedStopAdapter()
+    _jobs, gate, _command, _artifacts, runner = make_runner(tmp_path / "runner", command)
+    created = runner.start("server-readiness", {})
+    assert command.started.wait(1)
+
+    assert runner.cancel(created["job_id"]) is True
+    record = wait_for_terminal(runner, created["job_id"])
+
+    assert record["state"] == "failed"
+    assert record["error_category"] == "runtime_unavailable"
+    lease = gate.current()
+    assert lease is not None
+    assert lease["operation_id"] == created["job_id"]
+    assert lease["kind"] == "job"
+    assert lease["lease_until"] is None
+    assert lease["status"] == "reconciliation_failed"
+
+    assert gate.acquire("inference", "attempt-one", now=time.time(), lease_seconds=60) is False
+    blocked = gate.current()
+    assert blocked is not None
+    assert blocked["operation_id"] == created["job_id"]
+    assert blocked["status"] == "reconciliation_failed"
+
+    command.container_stopped = True
+    assert gate.acquire("inference", "attempt-two", now=time.time(), lease_seconds=60) is True
+    assert command.reconciliation_calls == [created["job_id"], created["job_id"]]
 
 
 def test_job_output_never_contains_prompt_or_completion(tmp_path):

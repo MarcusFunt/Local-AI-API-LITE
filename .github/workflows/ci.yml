@@ -50,9 +50,12 @@ jobs:
         run: >-
           ruff check scripts tests
           dashboard/backend/app dashboard/backend/tests
+          services/retrieval/retrieval_worker
 
       - name: Lint YAML
-        run: yamllint -d relaxed compose.yaml .github/workflows/ci.yml
+        run: >-
+          yamllint -d relaxed compose.yaml deploy/retrieval/compose.yaml
+          .github/workflows/ci.yml
 
       - name: Lint shell
         run: |
@@ -71,6 +74,13 @@ jobs:
           GPU_MEMORY_UTILIZATION: "0.75"
           REASONING_PARSER: qwen3
         run: docker compose config --quiet
+
+      - name: Validate retrieval Compose configuration without starting workers
+        env:
+          MODEL_CACHE_DIR: /tmp/local-ai-api-lite-retrieval-models
+        run: >-
+          docker compose --env-file deploy/retrieval/.env.example
+          --file deploy/retrieval/compose.yaml config --quiet
 
       - name: Scan repository history for secrets
         uses: gitleaks/gitleaks-action@v3

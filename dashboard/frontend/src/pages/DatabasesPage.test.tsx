@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DatabasesPage } from "./DatabasesPage";
@@ -73,8 +73,17 @@ describe("DatabasesPage", () => {
     await screen.findByText("Analytics");
     expect(screen.queryByText("private-dsn-value")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Reveal credential" }));
+    const dialog = await screen.findByRole("dialog", { name: "Confirm password to reveal credential" });
+    fireEvent.change(within(dialog).getByLabelText("Administrator password"), {
+      target: { value: "CorrectHorseBatteryStaple7" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reveal credential" }));
 
     expect(await screen.findByText("private-dsn-value")).toBeTruthy();
-    expect(apiMocks.revealDatabaseCredential).toHaveBeenCalledWith("a".repeat(32), "csrf-value");
+    expect(apiMocks.revealDatabaseCredential).toHaveBeenCalledWith(
+      "a".repeat(32),
+      "csrf-value",
+      "CorrectHorseBatteryStaple7",
+    );
   });
 });

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApiRequestError, getProfiles, getStatus } from "./api";
-import type { DashboardStatus, Profile, TelemetrySample } from "./api";
+import type { DashboardStatus, Profile, SpeechProfile, TelemetrySample } from "./api";
 import { createAuthClient } from "./auth";
 import type { AuthClient, AuthState, AuthenticatedState } from "./auth";
 import { AuthPage } from "./pages/AuthPage";
@@ -40,6 +40,7 @@ function makeSample(status: DashboardStatus): TelemetrySample {
 function useDashboard(onSessionExpired: () => void) {
   const [status, setStatus] = useState<DashboardStatus | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [speechProfiles, setSpeechProfiles] = useState<SpeechProfile[]>([]);
   const [samples, setSamples] = useState<TelemetrySample[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +74,7 @@ function useDashboard(onSessionExpired: () => void) {
     void getProfiles()
       .then((result) => {
         if (!disposed) setProfiles(result.profiles);
+        if (!disposed) setSpeechProfiles(result.speech_profiles);
       })
       .catch((cause: unknown) => {
         if (cause instanceof ApiRequestError && cause.status === 401) onSessionExpired();
@@ -84,7 +86,7 @@ function useDashboard(onSessionExpired: () => void) {
     };
   }, [onSessionExpired, refresh]);
 
-  return { status, profiles, samples, error };
+  return { status, profiles, speechProfiles, samples, error };
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -162,7 +164,7 @@ function AuthenticatedDashboard({
   onSessionExpired: () => void;
 }) {
   const [page, setPage] = useState<PageName>("Overview");
-  const { status, profiles, samples, error } = useDashboard(onSessionExpired);
+  const { status, profiles, speechProfiles, samples, error } = useDashboard(onSessionExpired);
   const statusText = useMemo(() => status?.inference.state ?? "Unknown", [status]);
 
   return (
@@ -173,7 +175,7 @@ function AuthenticatedDashboard({
         {error && <div className="connection-alert" role="alert"><span className="alert-symbol">!</span><div><strong>Controller connection issue</strong><span>{error}. The last successful snapshot remains on screen.</span></div></div>}
         {page !== "Settings" && <div className="page-state-line"><span className="eyebrow">INFERENCE STATE</span><StateBadge state={statusText} /><span className="controller-indicator"><span />CONTROLLER {status?.controller.state.toUpperCase() ?? "CONNECTING"}</span></div>}
         {page === "Overview" && <OverviewPage status={status} samples={samples} />}
-        {page === "Models" && <ModelsPage status={status} profiles={profiles} csrfToken={authState.csrfToken} />}
+        {page === "Models" && <ModelsPage status={status} profiles={profiles} speechProfiles={speechProfiles} csrfToken={authState.csrfToken} />}
         {page === "Benchmarks" && <BenchmarksPage csrfToken={authState.csrfToken} />}
         {page === "Logs" && <LogsPage />}
         {page === "Databases" && <DatabasesPage csrfToken={authState.csrfToken} />}

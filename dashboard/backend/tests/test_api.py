@@ -52,6 +52,22 @@ class FixedStatusCache:
             "last_successful_health_probe_at": "2026-10-28T19:40:18Z",
             "last_failure_reason": None,
             "cache_path": "C:/Users/operator/private-cache",
+            "model_services": [
+                {
+                    "service": "embed",
+                    "alias": "ddu-embed",
+                    "state": "Ready",
+                    "model_id": "ddu-embed",
+                    "model_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+                },
+                {
+                    "service": "rerank",
+                    "alias": "ddu-rerank",
+                    "state": "Starting/Loading",
+                    "model_id": None,
+                    "model_revision": None,
+                },
+            ],
             "telemetry": _host_metrics(),
             "observed_at": "2026-10-28T19:40:18Z",
             "stale": True,
@@ -151,6 +167,13 @@ def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboar
     assert response.json()["active_profile"]["id"] == "baseline-8k-4"
     assert response.json()["inference"]["configuration"]["reasoning_parser"] == "qwen3"
     assert response.json()["telemetry"]["gpu"]["utilization_percent"] is None
+    assert [service["alias"] for service in response.json()["model_services"]] == [
+        "ddu-embed",
+        "ddu-rerank",
+    ]
+    assert response.json()["model_services"][0]["model_revision"].startswith("97b0c614")
+    assert response.json()["model_services"][1]["state"] == "Starting/Loading"
+    assert [service["alias"] for service in response.json()["speech_services"]] == ["ddu-stt", "ddu-tts"]
     assert response.json()["status_cache"] == {
         "observed_at": "2026-10-28T19:40:18Z",
         "stale": True,
@@ -161,6 +184,41 @@ def test_status_exposes_read_only_runtime_profile_and_no_control_routes(dashboar
     assert "C:/Users/operator/private-cache" not in response.text
     assert "cache_path" not in response.json()
     assert client.post("/api/control/v1/inference/stop").status_code in {404, 405}
+
+
+def test_status_reader_collects_speech_workers_separately_from_retrieval(dashboard_root, tmp_path):
+    api = load_dashboard_module("api")
+
+    class FixedRetrievalReader:
+        def read(self, deadline=None):
+            return {
+                "embed": {"service": "embed", "alias": "ddu-embed", "state": "Ready"},
+                "rerank": {"service": "rerank", "alias": "ddu-rerank", "state": "Ready"},
+            }
+
+    class FixedSpeechReader:
+        def read(self, deadline=None):
+            return {
+                "stt": {"service": "stt", "alias": "ddu-stt", "state": "Ready"},
+                "tts": {"service": "tts", "alias": "ddu-tts", "state": "Stopped"},
+            }
+
+    client = AsgiTestClient(
+        api.create_app(
+            docker_reader=HealthyDocker(),
+            retrieval_status_reader=FixedRetrievalReader(),
+            speech_status_reader=FixedSpeechReader(),
+            telemetry_reader=_host_metrics,
+            profiles_path=dashboard_root / "dashboard" / "config" / "profiles.yaml",
+            metadata_path=tmp_path / "metadata.sqlite3",
+        )
+    )
+
+    snapshot = client.app.state.status_cache.reader.read(deadline=time.monotonic() + 5)
+
+    assert [item["alias"] for item in snapshot["model_services"]] == ["ddu-embed", "ddu-rerank"]
+    assert [item["alias"] for item in snapshot["speech_services"]] == ["ddu-stt", "ddu-tts"]
+    assert snapshot["speech_services"][1]["state"] == "Stopped"
 
 
 def test_profiles_endpoint_only_lists_validated_read_only_profiles(dashboard_root, tmp_path):
@@ -183,6 +241,11 @@ def test_profiles_endpoint_only_lists_validated_read_only_profiles(dashboard_roo
         "baseline-8k-4",
     ]
     assert response.json()["profiles"][1]["reasoning_parser"] == "qwen3"
+    assert [profile["id"] for profile in response.json()["speech_profiles"]] == [
+        "danish-speech-cpu"
+    ]
+    assert response.json()["speech_profiles"][0]["stt_alias"] == "ddu-stt"
+    assert response.json()["speech_profiles"][0]["tts_alias"] == "ddu-tts"
 
 
 def test_controller_serves_a_frontend_static_fixture(dashboard_root, tmp_path):
@@ -226,5 +289,6 @@ def test_invalid_profile_registry_returns_a_safe_unavailable_response(dashboard_
     assert response.status_code == 503
     assert response.json() == {
         "profiles": [],
+        "speech_profiles": [],
         "message": "The dashboard profile registry is unavailable",
     }

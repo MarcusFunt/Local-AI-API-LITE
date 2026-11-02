@@ -443,6 +443,7 @@ class JobCommandResult:
     return_code: int
     stdout: str
     output_too_large: bool = False
+    container_stopped: bool = True
 
 
 class DockerJobCommandAdapter:
@@ -511,14 +512,15 @@ class DockerJobCommandAdapter:
         reader.start()
         deadline = time.monotonic() + timeout_seconds
         timed_out = False
+        container_stopped = True
         while process.poll() is None:
             if cancel_event.is_set() or output_too_large.is_set():
-                self._stop_container(container_name)
+                container_stopped = self._stop_container(container_name)
                 self._terminate(process)
                 break
             if time.monotonic() >= deadline:
                 timed_out = True
-                self._stop_container(container_name)
+                container_stopped = self._stop_container(container_name)
                 self._terminate(process)
                 break
             time.sleep(0.05)
@@ -529,17 +531,25 @@ class DockerJobCommandAdapter:
             return_code = process.wait(timeout=3)
         reader.join(timeout=3)
         if timed_out:
-            return JobCommandResult(return_code, "{}")
+            return JobCommandResult(return_code, "{}", container_stopped=container_stopped)
         return JobCommandResult(
             return_code,
             output.decode("utf-8", errors="replace"),
             output_too_large=output_too_large.is_set(),
+            container_stopped=container_stopped,
         )
 
     def cancel(self, job_id: str) -> None:
         name = self._container_names.get(job_id)
         if name:
             self._stop_container(name)
+
+    def ensure_container_stopped(self, job_id: str) -> bool:
+        try:
+            _validate_job_id(job_id)
+        except JobValidationError:
+            return False
+        return self._stop_container(f"local-ai-dashboard-job-{job_id}")
 
     def _build_command(
         self, job_id: str, options: dict[str, Any], artifact_path: Path
@@ -659,10 +669,11 @@ class DockerJobCommandAdapter:
             process.kill()
             process.wait(timeout=3)
 
-    def _stop_container(self, name: str) -> None:
+    def _stop_container(self, name: str) -> bool:
+        docker = self.docker_path or "docker"
         try:
-            subprocess.run(
-                [self.docker_path or "docker", "stop", "--time", "2", name],
+            stopped = subprocess.run(
+                [docker, "stop", "--time", "2", name],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -670,8 +681,45 @@ class DockerJobCommandAdapter:
                 timeout=self.timeout,
                 check=False,
             )
+            if stopped.returncode == 0 or self._container_is_stopped(docker, name):
+                return True
         except (OSError, subprocess.SubprocessError):
-            return
+            if self._container_is_stopped(docker, name):
+                return True
+
+        try:
+            killed = subprocess.run(
+                [docker, "kill", name],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                timeout=self.timeout,
+                check=False,
+            )
+            if killed.returncode == 0 and self._container_is_stopped(docker, name):
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return self._container_is_stopped(docker, name)
+
+    def _container_is_stopped(self, docker: str, name: str) -> bool:
+        try:
+            inspected = subprocess.run(
+                [docker, "inspect", "--format", "{{.State.Running}}", name],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                shell=False,
+                timeout=self.timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if inspected.returncode == 0:
+            return inspected.stdout.strip().lower() == "false"
+        error = inspected.stderr.lower()
+        return "no such object" in error or "no such container" in error
 
 
 class JobRunner:
@@ -687,6 +735,15 @@ class JobRunner:
         self._cancel_events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._pending_finishes: dict[str, dict[str, Any]] = {}
+        previous_reconciler = gate.expired_lease_reconciler
+
+        def reconcile(lease: dict[str, Any]) -> bool:
+            if lease.get("kind") in {"job", "benchmark"}:
+                ensure_stopped = getattr(command_adapter, "ensure_container_stopped", None)
+                return bool(callable(ensure_stopped) and ensure_stopped(lease["operation_id"]))
+            return bool(callable(previous_reconciler) and previous_reconciler(lease))
+
+        gate.set_expired_lease_reconciler(reconcile)
 
     def start(self, job_id: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         spec, clean = self.registry.validate(job_id, options)
@@ -788,6 +845,7 @@ class JobRunner:
         cancel_event: threading.Event,
     ) -> None:
         started = time.time()
+        release_gate = True
         timeout_event = threading.Event()
         timer = threading.Timer(options["timeout_seconds"], lambda: _set_timeout(timeout_event, cancel_event))
         timer.daemon = True
@@ -813,6 +871,11 @@ class JobRunner:
                 timeout_seconds=options["timeout_seconds"],
                 cancel_event=cancel_event,
             )
+            if getattr(result, "container_stopped", True) is not True:
+                release_gate = False
+                self.gate.require_reconciliation(job_id)
+                self._finish(job_id, "failed", "runtime_unavailable", exit_code=getattr(result, "return_code", None))
+                return
             if timeout_event.is_set():
                 self._finish(job_id, "failed", "timeout", exit_code=getattr(result, "return_code", None))
                 return
@@ -872,10 +935,13 @@ class JobRunner:
                 self.artifact_store.cleanup_work(job_id)
             except Exception as exc:  # noqa: BLE001 - only a short exception class is logged.
                 _LOGGER.warning("Job work cleanup failed (%s)", type(exc).__name__)
-            try:
-                self.gate.release(job_id)
-            except Exception as exc:  # noqa: BLE001 - keep worker teardown independent.
-                _LOGGER.error("Job activity release failed (%s)", type(exc).__name__)
+            if release_gate:
+                try:
+                    self.gate.release(job_id)
+                except Exception as exc:  # noqa: BLE001 - keep worker teardown independent.
+                    _LOGGER.error("Job activity release failed (%s)", type(exc).__name__)
+            else:
+                _LOGGER.error("Job activity remains blocked because container stop was not confirmed")
             with self._lock:
                 pending_finish = self._pending_finishes.pop(job_id, None)
                 self._cancel_events.pop(job_id, None)

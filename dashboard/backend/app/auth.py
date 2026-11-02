@@ -258,6 +258,31 @@ class AuthService:
             )
         return LoginResult(session_token, csrf_token, session)
 
+    def reauthenticate_sensitive_action(
+        self,
+        session: AuthSession,
+        password: str,
+        client_key: str,
+    ) -> None:
+        """Require the current administrator password again before a sensitive action."""
+        if self.limiter.is_limited(client_key):
+            raise LoginRateLimitedError()
+        now = _format_time(_as_utc(self.clock()))
+        with self.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT password_hash FROM admin_account WHERE singleton = 1"
+            ).fetchone()
+            active = connection.execute(
+                "SELECT 1 FROM auth_sessions WHERE session_id = ? AND revoked_at IS NULL "
+                "AND expires_at > ?",
+                (session.session_id, now),
+            ).fetchone()
+        verifier = row[0] if row is not None else None
+        if verifier is None or active is None or not _safe_verify(self.password_hasher, password, verifier):
+            self.limiter.record_failure(client_key)
+            raise InvalidCredentialsError()
+        self.limiter.clear(client_key)
+
     def load_session(self, cookie: str | None) -> AuthSession | None:
         if not cookie:
             return None

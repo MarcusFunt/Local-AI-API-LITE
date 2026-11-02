@@ -28,3 +28,31 @@ profiles:
     gpu_memory_utilization: 0.75
     validation_state: validated
     description: Host-tested alternative; the stable model alias is unchanged.
+speech_profiles:
+  - id: danish-speech-cpu
+    name: Danish speech / CPU
+    language: Danish (da-DK)
+    stt_alias: ddu-stt
+    stt_model_id: Systran/faster-whisper-small
+    stt_model_revision: 536b0662742c02347bc0e980a01041f333bce120
+    stt_runtime: faster-whisper 1.2.1 / CTranslate2 CPU int8
+    stt_license: MIT
+    tts_alias: ddu-tts
+    tts_model_id: rhasspy/piper-voices
+    tts_model_revision: 320d5f7f7751a17ef6512d5c23863056c6a11c0f
+    tts_voice_id: da_DK-talesyntese-medium
+    tts_runtime: piper-tts 1.8.0 / ONNX Runtime CPU
+    tts_runtime_license: GPL-3.0-or-later
+    tts_voice_dataset_license: CC0 (per voice model card)
+    compose_project: local-ai-api-lite-speech
+    compose_profile: danish-speech
+    cpu_only: true
+    stt_cpu_limit: 4.0
+    stt_memory_limit: 4g
+    tts_cpu_limit: 1.0
+    tts_memory_limit: 1g
+    max_audio_seconds: 120
+    max_audio_bytes: 25000000
+    max_text_characters: 4000
+    validation_state: implementation-unverified
+    description: Pinned local Danish transcription and speech synthesis. CPU-only; real model loading and host performance still require an operator smoke check.

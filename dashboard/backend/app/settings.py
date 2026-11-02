@@ -13,6 +13,11 @@ def main(argv: list[str] | None = None) -> int:
         "configure-compose-root", help="set the explicitly chosen local inference project"
     )
     configure.add_argument("--path", required=True)
+    configure_retrieval = commands.add_parser(
+        "configure-retrieval-compose-root",
+        help="set the explicitly chosen independent retrieval Compose project",
+    )
+    configure_retrieval.add_argument("--path", required=True)
     arguments = parser.parse_args(argv)
     if arguments.command == "configure-compose-root":
         try:
@@ -20,6 +25,13 @@ def main(argv: list[str] | None = None) -> int:
         except ConfigurationError as exc:
             parser.error(str(exc))
         print("Local Compose project configured and validated.")
+        return 0
+    if arguments.command == "configure-retrieval-compose-root":
+        try:
+            LocalSettingsStore().configure_retrieval_compose_root(Path(arguments.path))
+        except ConfigurationError as exc:
+            parser.error(str(exc))
+        print("Independent retrieval Compose project configured and validated.")
         return 0
     return 2
 
