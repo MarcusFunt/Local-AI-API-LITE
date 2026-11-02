@@ -139,19 +139,28 @@ describe("ExamplesPage", () => {
   });
 
   it.each([
-    { state: "ready", label: "Ready", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
-    { state: "starting", label: "Preparing", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
-    { state: "stopping", label: "Stopping", start: "Start example", startDisabled: true, stop: "Stopping…", stopDisabled: true },
-    { state: "failed", label: "Failed", start: "Retry start", startDisabled: false, stop: "Stop example", stopDisabled: false },
-    { state: "recovery-required", label: "Recovery required", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
-  ] as const)("exposes $state status and lifecycle actions in the workspace header", async ({ state, label, start, startDisabled, stop, stopDisabled }) => {
+    { state: "stopped", label: "Stopped", start: "Start example", startDisabled: false, stop: null },
+    { state: "ready", label: "Ready", start: null, startDisabled: false, stop: "Stop example" },
+    { state: "starting", label: "Preparing", start: null, startDisabled: false, stop: "Stop example" },
+    { state: "stopping", label: "Stopping", start: null, startDisabled: false, stop: "Stopping…" },
+    { state: "failed", label: "Failed", start: "Retry start", startDisabled: false, stop: "Stop example" },
+    { state: "recovery-required", label: "Recovery required", start: null, startDisabled: false, stop: "Stop example" },
+  ] as const)("exposes $state status and relevant lifecycle actions in the workspace header", async ({ state, label, start, startDisabled, stop }) => {
     apiMocks.getExamples.mockResolvedValue([makeStatus(state)]);
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
     expect(await workspace.findByText(label, { exact: true })).toBeTruthy();
     expect(workspace.getByRole("heading", { level: 1, name: "Chat + Voice" })).toBeTruthy();
-    expect((workspace.getByRole("button", { name: start }) as HTMLButtonElement).disabled).toBe(startDisabled);
-    expect((workspace.getByRole("button", { name: stop }) as HTMLButtonElement).disabled).toBe(stopDisabled);
+    if (start) {
+      expect((workspace.getByRole("button", { name: start }) as HTMLButtonElement).disabled).toBe(startDisabled);
+    } else {
+      expect(workspace.queryByRole("button", { name: /^(Start example|Retry start)$/ })).toBeNull();
+    }
+    if (stop) {
+      expect((workspace.getByRole("button", { name: stop }) as HTMLButtonElement).disabled).toBe(state === "stopping");
+    } else {
+      expect(workspace.queryByRole("button", { name: /^(Stop example|Stopping…)$/ })).toBeNull();
+    }
     expect((workspace.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(false);
   });
 

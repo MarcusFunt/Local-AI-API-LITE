@@ -619,18 +619,21 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     }
   };
 
+  const showStartAction = !workspace || canStart || pendingAction === "start" || status?.state === "stopped" || status?.state === "failed";
+  const showStopAction = !workspace || canStop || pendingAction === "stop" || status?.state === "stopping";
+
   const lifecycleActions = <div className="example-actions">
     {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
       onOpenWorkspace();
     }}>Open Chat + Voice</a>}
-    <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
+    {showStartAction && <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
       {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
-    </button>
-    <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
+    </button>}
+    {showStopAction && <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
       {pendingAction === "stop" || status?.state === "stopping" ? "Stopping…" : "Stop example"}
-    </button>
+    </button>}
     <button className="text-button" type="button" disabled={loading} onClick={() => void refresh()}>
       Refresh status
     </button>
@@ -681,7 +684,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
     {appReady && <section className="panel chat-panel" aria-labelledby="conversation-title">
       <div className="chat-panel-heading">
-        <div><span className="eyebrow">IN-MEMORY CONVERSATION</span><h2 id="conversation-title">Chat with ddu-narrator</h2></div>
+        <div><span className="eyebrow">IN-MEMORY CONVERSATION</span><h2 id="conversation-title">Conversation</h2></div>
         <button className="text-button" type="button" onClick={clearConversation} disabled={messages.length === 0 && !draft && !transcribing && !recording}>Clear session</button>
       </div>
 
