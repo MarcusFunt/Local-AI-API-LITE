@@ -103,6 +103,57 @@ describe("ExamplesPage", () => {
     expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the workspace when ready despite an older stopped refresh resolving after a successful start", async () => {
+    const onOpenWorkspace = vi.fn();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    apiMocks.startExample.mockResolvedValue(makeStatus("starting"));
+    render(<ExamplesPage workspace={false} onOpenWorkspace={onOpenWorkspace} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Stopped");
+    let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
+    await screen.findByText("Preparing");
+    await act(async () => resolveOldRefresh([makeStatus("stopped")]));
+    apiMocks.getExamples.mockResolvedValue([makeStatus("ready")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Ready");
+    expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the newer lifecycle observation when overlapping refreshes complete out of order", async () => {
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Ready");
+    let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await screen.findByText("Preparing");
+    await act(async () => resolveOldRefresh([makeStatus("stopped")]));
+    expect(screen.queryByText("Stopped")).toBeNull();
+    expect(screen.getByText("Preparing")).toBeTruthy();
+  });
+
+  it("ignores a refresh from before Stop while the lifecycle operation is pending", async () => {
+    render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByText("Ready");
+    let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
+    let resolveStop!: (status: ExamplePublicStatus) => void;
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
+    apiMocks.stopExample.mockImplementationOnce(() => new Promise((resolve) => { resolveStop = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop example" }));
+    await screen.findByText("Stopping");
+    await act(async () => resolveOldRefresh([makeStatus("ready")]));
+    expect(screen.queryByText("Ready")).toBeNull();
+    expect(screen.getByText("Stopping")).toBeTruthy();
+    apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
+    await act(async () => resolveStop(makeStatus("stopped")));
+    expect(await screen.findByText("Stopped")).toBeTruthy();
+  });
+
   it("stays in the catalog with a start error after a rejected start, even if status later becomes ready", async () => {
     const onOpenWorkspace = vi.fn();
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);

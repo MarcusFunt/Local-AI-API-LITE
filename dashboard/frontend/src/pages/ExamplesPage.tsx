@@ -133,6 +133,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const messageIdRef = useRef(0);
   const openWorkspaceOnReadyRef = useRef(false);
+  const statusRequestIdRef = useRef(0);
 
   const setAudio = useCallback((nextUrl: string | null) => {
     if (audioUrlRef.current && audioUrlRef.current !== nextUrl) {
@@ -143,19 +144,19 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   }, []);
 
   const refresh = useCallback(async (): Promise<ExamplePublicStatus | null> => {
+    const requestId = ++statusRequestIdRef.current;
     setStatusError(null);
     try {
       const examples = await getExamples();
       const next = examples[0] ?? null;
-      if (mountedRef.current) {
-        setStatus(next);
-        setStatusError(null);
-        setLoading(false);
-      }
+      if (!mountedRef.current || requestId !== statusRequestIdRef.current) return null;
+      setStatus(next);
+      setStatusError(null);
+      setLoading(false);
       return next;
     } catch (cause) {
       if (apiStatus(cause) === 401) onSessionExpired();
-      if (mountedRef.current) {
+      if (mountedRef.current && requestId === statusRequestIdRef.current) {
         setStatusError("Example status is unavailable. Try refreshing the page status.");
         setLoading(false);
       }
@@ -314,6 +315,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const start = async () => {
     if (pendingAction || status?.chat_dependency.state !== "ready") return;
+    // Observations requested before this lifecycle action must not overwrite it.
+    statusRequestIdRef.current++;
     setPendingAction("start");
     setError(null);
     setNotice(null);
@@ -337,6 +340,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const stop = async () => {
     if (pendingAction) return;
+    statusRequestIdRef.current++;
     openWorkspaceOnReadyRef.current = false;
     cancelRecording(false);
     abortRequests();
