@@ -201,6 +201,7 @@ export interface ExampleChatMessage {
 }
 
 export type ExampleChatPreset = "fast" | "balanced" | "quality";
+export type ExampleLanguage = "da" | "en";
 
 export interface ExampleChatReply {
   text: string;
@@ -442,6 +443,7 @@ export function stopExample(csrfToken: string, signal?: AbortSignal): Promise<Ex
 
 export function sendChatTurn(
   csrfToken: string,
+  language: ExampleLanguage,
   preset: ExampleChatPreset,
   messages: ExampleChatMessage[],
   signal?: AbortSignal,
@@ -449,7 +451,7 @@ export function sendChatTurn(
   return exampleMutation<ExampleChatReply>(
     "/api/control/v1/examples/chat-voice/chat",
     csrfToken,
-    { preset, messages },
+    { language, preset, messages },
     signal,
     130_000,
   );
@@ -458,11 +460,13 @@ export function sendChatTurn(
 export async function transcribeAudio(
   csrfToken: string,
   audio: Blob,
+  language: ExampleLanguage,
   signal?: AbortSignal,
 ): Promise<{ text: string }> {
   const form = new FormData();
   const extension = audio.type.includes("ogg") ? "ogg" : audio.type.includes("wav") ? "wav" : audio.type.includes("mp4") ? "mp4" : "webm";
   form.append("file", audio, `recording.${extension}`);
+  form.append("language", language);
   const response = await fetch("/api/control/v1/examples/chat-voice/transcribe", {
     method: "POST",
     headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
@@ -478,6 +482,7 @@ export async function transcribeAudio(
 export async function synthesizeReply(
   csrfToken: string,
   text: string,
+  language: ExampleLanguage,
   signal?: AbortSignal,
 ): Promise<Blob> {
   const response = await fetch("/api/control/v1/examples/chat-voice/synthesize", {
@@ -489,7 +494,7 @@ export async function synthesizeReply(
     },
     credentials: "same-origin",
     cache: "no-store",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, language }),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
   });
   if (!response.ok) throw new ApiRequestError(response.status);

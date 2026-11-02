@@ -11,6 +11,7 @@ import {
 import type {
   ExampleChatMessage,
   ExampleChatPreset,
+  ExampleLanguage,
   ExamplePublicStatus,
   ExampleState,
 } from "../api";
@@ -99,6 +100,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [preset, setPreset] = useState<ExampleChatPreset>("balanced");
+  const [language, setLanguage] = useState<ExampleLanguage>("da");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -365,6 +367,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     event.preventDefault();
     const content = draft.trim();
     if (!content || !canChat) return;
+    const requestLanguage = language;
     const previousMessages = messages;
     const history: ExampleChatMessage[] = [
       ...messages.slice(-15).map(({ role, content: messageContent }) => ({ role, content: messageContent })),
@@ -383,7 +386,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     setChatStartedAt(Date.now());
     setChatElapsedMs(0);
     try {
-      const reply = await sendChatTurn(csrfToken, preset, history, controller.signal);
+      const reply = await sendChatTurn(csrfToken, requestLanguage, preset, history, controller.signal);
       const assistantMessage: ConversationMessage = {
         id: ++messageIdRef.current,
         role: "assistant",
@@ -393,7 +396,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       if (mountedRef.current && !controller.signal.aborted && activeChatRef.current === activeRequest) {
         setMessages((previous) => [...previous.slice(-15), assistantMessage]);
         if (speakReplies && voiceReady && reply.text.length <= MAX_TTS_CHARACTERS) {
-          void speak(reply.text, assistantMessage.id, true);
+          void speak(reply.text, assistantMessage.id, requestLanguage, true);
         }
       }
     } catch (cause) {
@@ -421,7 +424,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     setNotice("Stopped waiting. Your message is back in the composer. The local model may finish this request in the background.");
   };
 
-  const transcribe = useCallback(async (audio: Blob) => {
+  const transcribe = useCallback(async (audio: Blob, recordingLanguage: ExampleLanguage) => {
     if (!audio.size || audio.size > MAX_AUDIO_BYTES) {
       setVoiceError(audio.size > MAX_AUDIO_BYTES ? "Recording exceeded the 25 MB audio limit." : "No audio was recorded. Hold to talk and try again.");
       return;
@@ -432,7 +435,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     const controller = new AbortController();
     transcribeAbortRef.current = controller;
     try {
-      const result = await transcribeAudio(csrfToken, audio, controller.signal);
+      const result = await transcribeAudio(csrfToken, audio, recordingLanguage, controller.signal);
       if (!mountedRef.current || controller.signal.aborted) return;
       if (!result.text.trim()) {
         setDraft("");
@@ -476,6 +479,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
 
   const beginRecording = async () => {
     if (!canUseVoice || pointerHeldRef.current) return;
+    const recordingLanguage = language;
     pointerHeldRef.current = true;
     setVoiceError(null);
     setVoiceNotice(null);
@@ -511,7 +515,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
         cancelStopRef.current = false;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         chunksRef.current = [];
-        if (!wasCancelled && mountedRef.current) void transcribe(blob);
+        if (!wasCancelled && mountedRef.current) void transcribe(blob, recordingLanguage);
       };
       recorder.onerror = () => {
         cancelRecording(false);
@@ -528,14 +532,14 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     }
   };
 
-  const speak = useCallback(async (text: string, messageId: number, autoplay = false) => {
+  const speak = useCallback(async (text: string, messageId: number, speechLanguage: ExampleLanguage, autoplay = false) => {
     if (!voiceReady || text.length > MAX_TTS_CHARACTERS || synthesizing !== null) return;
     setSynthesizing(messageId);
     setVoiceError(null);
     const controller = new AbortController();
     synthAbortRef.current = controller;
     try {
-      const audio = await synthesizeReply(csrfToken, text, controller.signal);
+      const audio = await synthesizeReply(csrfToken, text, speechLanguage, controller.signal);
       if (!mountedRef.current || controller.signal.aborted) return;
       setAudio(URL.createObjectURL(audio));
       setPlayAudioOnLoad(autoplay);
@@ -622,6 +626,15 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
         <button className="text-button" type="button" onClick={clearConversation} disabled={messages.length === 0 && !draft && !transcribing && !recording}>Clear session</button>
       </div>
 
+      <div className="language-control">
+        <label htmlFor="example-language">Language</label>
+        <select id="example-language" value={language} onChange={(event) => setLanguage(event.currentTarget.value as ExampleLanguage)}>
+          <option value="da">Danish</option>
+          <option value="en">English</option>
+        </select>
+        <span>Chat, transcription, and spoken replies</span>
+      </div>
+
       <div className="preset-control">
         <div className="preset-heading"><label htmlFor="example-preset">Speed ↔ Quality</label><output htmlFor="example-preset">{preset[0].toUpperCase() + preset.slice(1)}</output></div>
         <input
@@ -651,7 +664,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
                 className="text-button"
                 type="button"
                 disabled={!voiceReady || message.content.length > MAX_TTS_CHARACTERS || synthesizing === message.id}
-                onClick={() => void speak(message.content, message.id, true)}
+                onClick={() => void speak(message.content, message.id, language, true)}
               >{synthesizing === message.id ? "Preparing audio…" : "Speak reply"}</button>
               {message.content.length > MAX_TTS_CHARACTERS && <span>Reply exceeds the 4,000 character speech limit.</span>}
             </div>}
@@ -705,7 +718,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       </form>
 
       <div className="voice-controls">
-        <div className="voice-control-copy"><strong>Turn-based Danish voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
+        <div className="voice-control-copy"><strong>Turn-based {language === "da" ? "Danish" : "English"} voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
         <button
           className={`secondary-button push-to-talk ${recording ? "push-to-talk-recording" : ""}`}
           type="button"

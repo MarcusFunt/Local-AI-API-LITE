@@ -54,10 +54,129 @@ function ready() {
   apiMocks.synthesizeReply.mockResolvedValue(new Blob(["RIFF audio"], { type: "audio/wav" }));
 }
 
+function installRecorder() {
+  class FakeRecorder {
+    static isTypeSupported() { return true; }
+    ondataavailable?: (event: { data: Blob }) => void;
+    onstop?: () => void;
+    mimeType = "audio/webm";
+    state = "inactive";
+    start() { this.state = "recording"; }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob(["audio"], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+  }
+  const stream = { getTracks: () => [{ stop: vi.fn() }] };
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+  vi.stubGlobal("MediaRecorder", FakeRecorder);
+  return { getUserMedia, stream };
+}
+
+function installAudioUrls() {
+  vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:spoken-reply"), revokeObjectURL: vi.fn() });
+}
+
 describe("ExamplesPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     ready();
+  });
+
+  it("defaults language to Danish, preserves the conversation when changed, and resets after reload", async () => {
+    const page = render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const language = await screen.findByRole("combobox", { name: "Language" }) as HTMLSelectElement;
+    expect(language.id).toBe("example-language");
+    expect(language.value).toBe("da");
+    expect(Array.from(language.options, (option) => [option.value, option.text])).toEqual([["da", "Danish"], ["en", "English"]]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "First turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("A useful reply");
+    fireEvent.change(language, { target: { value: "en" } });
+    expect(screen.getByText("First turn")).toBeTruthy();
+    expect(screen.getByText("A useful reply")).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Next turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalledTimes(2));
+    expect(apiMocks.sendChatTurn.mock.calls[0][1]).toBe("da");
+    expect(apiMocks.sendChatTurn.mock.calls[1].slice(1, 4)).toEqual(["en", "balanced", [
+      { role: "user", content: "First turn" }, { role: "assistant", content: "A useful reply" }, { role: "user", content: "Next turn" },
+    ]]);
+    page.unmount();
+    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    expect((await screen.findByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("da");
+    expect(screen.queryByText("First turn")).toBeNull();
+  });
+
+  it("sends English selection to chat, transcription, and manual speech", async () => {
+    installRecorder();
+    installAudioUrls();
+    apiMocks.transcribeAudio.mockResolvedValue({ text: "Good morning" });
+    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Language" }), { target: { value: "en" } });
+    expect(screen.getByText("Turn-based English voice input")).toBeTruthy();
+    const push = screen.getByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Good morning"));
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledWith("csrf-value", expect.any(Blob), "en", expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("A useful reply");
+    expect(apiMocks.sendChatTurn).toHaveBeenCalledWith("csrf-value", "en", "balanced", [{ role: "user", content: "Good morning" }], expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button", { name: "Speak reply" }));
+    await screen.findByLabelText("Spoken reply audio");
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", "en", expect.any(AbortSignal));
+  });
+
+  it("keeps the chat language captured at start for automatic speech while later actions use the new selection", async () => {
+    installAudioUrls();
+    let resolveChat: ((reply: { text: string; elapsed_ms: number }) => void) | undefined;
+    apiMocks.sendChatTurn.mockImplementationOnce(() => new Promise((resolve) => { resolveChat = resolve; }));
+    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const language = await screen.findByRole("combobox", { name: "Language" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Speak replies automatically" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Danish turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.change(language, { target: { value: "en" } });
+    await act(async () => { resolveChat?.({ text: "Danish reply", elapsed_ms: 1 }); });
+    await screen.findByLabelText("Spoken reply audio");
+    expect(apiMocks.sendChatTurn.mock.calls[0][1]).toBe("da");
+    expect(apiMocks.synthesizeReply.mock.calls[0].slice(0, 3)).toEqual(["csrf-value", "Danish reply", "da"]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "English turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("A useful reply");
+    await waitFor(() => expect(apiMocks.synthesizeReply).toHaveBeenCalledTimes(2));
+    expect(apiMocks.sendChatTurn.mock.calls[1][1]).toBe("en");
+    expect(apiMocks.synthesizeReply.mock.calls[1].slice(0, 3)).toEqual(["csrf-value", "A useful reply", "en"]);
+    fireEvent.change(language, { target: { value: "da" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Speak reply" })[1]);
+    await waitFor(() => expect(apiMocks.synthesizeReply).toHaveBeenCalledTimes(3));
+    expect(apiMocks.synthesizeReply.mock.calls[2].slice(0, 3)).toEqual(["csrf-value", "A useful reply", "da"]);
+  });
+
+  it("captures recording language before awaiting microphone permission and uses the new selection for the next recording", async () => {
+    const { getUserMedia, stream } = installRecorder();
+    let allowMicrophone: ((stream: unknown) => void) | undefined;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
+    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const language = await screen.findByRole("combobox", { name: "Language" });
+    const push = screen.getByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    fireEvent.change(language, { target: { value: "en" } });
+    await act(async () => { allowMicrophone?.(stream); });
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
+    expect(apiMocks.transcribeAudio.mock.calls[0][2]).toBe("da");
+    await screen.findByRole("button", { name: "Push to talk" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(push);
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(2));
+    expect(apiMocks.transcribeAudio.mock.calls[1][2]).toBe("en");
   });
 
   it.each([
@@ -98,8 +217,9 @@ describe("ExamplesPage", () => {
     expect(await screen.findByText("A useful reply")).toBeTruthy();
     expect(screen.getByText("321 ms")).toBeTruthy();
     await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalled());
-    expect(apiMocks.sendChatTurn.mock.calls[0].slice(0, 3)).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[0].slice(0, 4)).toEqual([
       "csrf-value",
+      "da",
       "quality",
       [{ role: "user", content: "Compare two ideas" }],
     ]);
@@ -123,7 +243,7 @@ describe("ExamplesPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("Recovered reply")).toBeTruthy();
-    expect(apiMocks.sendChatTurn.mock.calls[1][2]).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[1][3]).toEqual([
       { role: "user", content: "Please keep this prompt" },
     ]);
   });
@@ -160,7 +280,7 @@ describe("ExamplesPage", () => {
     await screen.findByText("A useful reply");
 
     let requestSignal: AbortSignal | undefined;
-    apiMocks.sendChatTurn.mockImplementation((_csrf, _preset, _messages, signal) => new Promise((_resolve, reject) => {
+    apiMocks.sendChatTurn.mockImplementation((_csrf, _language, _preset, _messages, signal) => new Promise((_resolve, reject) => {
       requestSignal = signal;
       signal.addEventListener("abort", () => {
         const error = new Error("aborted");
@@ -183,7 +303,7 @@ describe("ExamplesPage", () => {
     apiMocks.sendChatTurn.mockResolvedValueOnce({ text: "Retried reply", elapsed_ms: 456, usage: {} });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("Retried reply")).toBeTruthy();
-    expect(apiMocks.sendChatTurn.mock.calls[2][2]).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[2][3]).toEqual([
       { role: "user", content: "Earlier turn" },
       { role: "assistant", content: "A useful reply" },
       { role: "user", content: "Retry this turn" },
@@ -210,7 +330,7 @@ describe("ExamplesPage", () => {
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     let transcriptionSignal: AbortSignal | undefined;
     let resolveTranscription: ((result: { text: string }) => void) | undefined;
-    apiMocks.transcribeAudio.mockImplementation((_csrf, _audio, signal) => new Promise((resolve) => {
+    apiMocks.transcribeAudio.mockImplementation((_csrf, _audio, _language, signal) => new Promise((resolve) => {
       transcriptionSignal = signal;
       resolveTranscription = resolve;
     }));
@@ -272,7 +392,7 @@ describe("ExamplesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Speak reply" }));
 
     expect(await screen.findByLabelText("Spoken reply audio")).toBeTruthy();
-    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", expect.any(AbortSignal));
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", "A useful reply", "da", expect.any(AbortSignal));
   });
 
   it("sends CSRF with lifecycle requests and prevents duplicate starts", async () => {
@@ -420,7 +540,7 @@ describe("ExamplesPage", () => {
     fireEvent.change(composer, { target: { value: "Typed before speaking\nGodmorgen, team" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalled());
-    expect(apiMocks.sendChatTurn.mock.calls[0][2]).toEqual([
+    expect(apiMocks.sendChatTurn.mock.calls[0][3]).toEqual([
       { role: "user", content: "Typed before speaking\nGodmorgen, team" },
     ]);
   });

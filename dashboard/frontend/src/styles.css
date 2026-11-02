@@ -353,6 +353,11 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .chat-panel { margin-top: 16px; }
 .chat-panel-heading { align-items: flex-start; }
 .chat-panel-heading .text-button { flex: 0 0 auto; margin: 4px 0 0; }
+.language-control { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 17px; }
+.language-control label { color: #a8b7ad; font-size: 11px; }
+.language-control select { min-width: 140px; min-height: 40px; padding: 8px 12px; border: 1px solid #35413a; border-radius: 6px; color: #e5ece6; background: #111613; font: 12px var(--display); }
+.language-control select:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.language-control > span { color: #78867d; font-size: 10px; }
 .preset-control { margin-top: 17px; padding: 14px 15px 12px; border: 1px solid #2a3730; border-radius: 8px; background: #141a16; }
 .preset-heading { display: flex; justify-content: space-between; align-items: center; color: #a8b7ad; font-size: 10px; }
 .preset-heading output { color: var(--mint); font: 10px var(--mono); }
@@ -457,6 +462,10 @@ button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
   .example-actions .text-button { min-height: 48px; margin: 0; padding: 10px 8px; }
   .chat-panel-heading { align-items: center; gap: 8px; }
   .chat-panel-heading .text-button { min-height: 48px; margin: 0; padding: 10px 8px; }
+  .language-control { gap: 8px 12px; }
+  .language-control label { font-size: 13px; }
+  .language-control select { flex: 1; min-height: 48px; font-size: 16px; }
+  .language-control > span { flex-basis: 100%; font-size: 12px; }
   .assistant-actions .text-button,
   .chat-request-status > .text-button,
   .spoken-reply-heading .text-button { min-height: 48px; padding: 10px 8px; }
