@@ -237,9 +237,19 @@ class ActivityGate:
     ) -> None:
         self.expired_lease_reconciler = reconciler
 
-    def acquire(self, kind: str, operation_id: str, now: float, lease_seconds: float) -> bool:
-        if not kind or not operation_id or not math.isfinite(lease_seconds) or lease_seconds <= 0:
+    def acquire(
+        self,
+        kind: str,
+        operation_id: str,
+        now: float,
+        lease_seconds: float | None,
+    ) -> bool:
+        if not kind or not operation_id or (
+            lease_seconds is not None
+            and (not math.isfinite(lease_seconds) or lease_seconds <= 0)
+        ):
             raise ValueError("Activity gate lease values are invalid")
+        lease_until = None if lease_seconds is None else now + lease_seconds
         expired: dict[str, Any] | None = None
         with self.metadata.transaction() as connection:
             row = connection.execute(
@@ -249,13 +259,13 @@ class ActivityGate:
                 connection.execute(
                     "UPDATE activity_gate SET operation_id = ?, kind = ?, lease_until = ?, status = 'active' "
                     "WHERE singleton = 1",
-                    (operation_id, kind, now + lease_seconds),
+                    (operation_id, kind, lease_until),
                 )
                 return True
             if row[0] == operation_id and row[3] == "active":
                 connection.execute(
                     "UPDATE activity_gate SET lease_until = ?, status = 'active' WHERE singleton = 1",
-                    (now + lease_seconds,),
+                    (lease_until,),
                 )
                 return True
             if row[0] == operation_id:
@@ -273,7 +283,7 @@ class ActivityGate:
             connection.execute(
                 "UPDATE activity_gate SET operation_id = ?, kind = ?, lease_until = ?, status = 'reconciling' "
                 "WHERE singleton = 1",
-                (operation_id, kind, now + lease_seconds),
+                (operation_id, kind, lease_until),
             )
 
         if expired is None:
@@ -298,9 +308,13 @@ class ActivityGate:
                 return False
             connection.execute(
                 "UPDATE activity_gate SET status = 'active', lease_until = ? WHERE singleton = 1",
-                (now + lease_seconds,),
+                (lease_until,),
             )
         return True
+
+    def reserve(self, kind: str, operation_id: str, now: float) -> bool:
+        """Reserve the gate indefinitely for a runtime whose lifetime is external."""
+        return self.acquire(kind, operation_id, now, lease_seconds=None)
 
     def heartbeat(self, operation_id: str, now: float, lease_seconds: float) -> None:
         if not math.isfinite(lease_seconds) or lease_seconds <= 0:

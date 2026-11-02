@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,10 +19,12 @@ from .configuration import LocalSettingsStore
 from .control_state import ActivityGate, OperationCoordinator
 from .databases import DatabaseMonitor
 from .docker_status import DockerReader
+from .example_proxy import ExampleProxy, ExampleRequestSizeLimitMiddleware
+from .example_runner import DashboardExampleDependencyReader, ExampleRunner
 from .jobs import DockerJobCommandAdapter, JobArtifactStore, JobRunner
 from .logs import DockerLogReader
 from .paths import data_directory
-from .persistence import JOB_SCHEMA, MetadataStore
+from .persistence import EXAMPLES_SCHEMA, JOB_SCHEMA, MetadataStore
 from .profiles import (
     DEFAULT_PROFILES_PATH,
     load_profiles,
@@ -29,10 +33,11 @@ from .profiles import (
     public_speech_profile,
 )
 from .retrieval_compose import RetrievalComposeRunner
-from .retrieval_operations import RetrievalOperationCoordinator
+from .retrieval_operations import RetrievalOperationCoordinator, ensure_retrieval_operation_schema
 from .retrieval_status import RetrievalServiceDockerReader, unknown_retrieval_service_snapshots
 from .routes.auth import router as auth_router
 from .routes.databases import router as databases_router
+from .routes.examples import router as examples_router
 from .routes.jobs import router as jobs_router
 from .routes.logs import router as logs_router
 from .routes.operations import router as operations_router
@@ -44,6 +49,7 @@ from .telemetry import read_host_telemetry
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FRONTEND_DIST = ROOT / "dashboard" / "frontend" / "dist"
+_LOGGER = logging.getLogger(__name__)
 
 
 class ComposeRunnerProvider:
@@ -128,14 +134,32 @@ def create_app(
     retrieval_status_reader: Any | None = None,
     speech_status_reader: Any | None = None,
     retrieval_operation_coordinator: Any | None = None,
+    example_runner: Any | None = None,
+    example_compose: Any | None = None,
+    example_dependency_reader: Any | None = None,
+    example_proxy: Any | None = None,
 ) -> FastAPI:
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        try:
+            application.state.example_runner.reconcile()
+        except Exception as exc:  # noqa: BLE001 - restart recovery must not stop controller startup.
+            _LOGGER.warning("Example restart reconciliation failed (%s)", type(exc).__name__)
+        start_monitor = getattr(application.state.example_runner, "start_idle_monitor", None)
+        if callable(start_monitor):
+            start_monitor()
+        yield
+
     app = FastAPI(
         title="Local-AI-API-LITE Dashboard",
         version="0.1.0",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
+    app.add_middleware(ExampleRequestSizeLimitMiddleware)
 
     @app.exception_handler(RequestValidationError)
     def sanitized_validation_error(_request: Any, _exception: RequestValidationError) -> JSONResponse:
@@ -254,6 +278,7 @@ def create_app(
         )
     else:
         app.state.database_monitor = database_monitor
+    ensure_retrieval_operation_schema(store)
     app.state.retrieval_operation_coordinator = retrieval_operation_coordinator or RetrievalOperationCoordinator(
         app.state.local_settings_store,
         RetrievalComposeRunner(settings=app.state.local_settings_store),
@@ -265,11 +290,26 @@ def create_app(
             app.state.retrieval_operation_coordinator.reconcile_after_restart()
         except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
             pass
+    if store.schema_version() < 9:
+        store.migrate(9, EXAMPLES_SCHEMA)
+    if example_runner is None:
+        example_gate = getattr(app.state.operation_coordinator, "gate", None) or activity_gate
+        app.state.example_runner = ExampleRunner(
+            metadata=store,
+            gate=example_gate,
+            dependency_reader=example_dependency_reader
+            or DashboardExampleDependencyReader(app.state.status_cache),
+            compose=example_compose,
+        )
+    else:
+        app.state.example_runner = example_runner
+    app.state.example_proxy = example_proxy or ExampleProxy(app.state.example_runner)
     app.include_router(operations_router)
     app.include_router(retrieval_operations_router)
     app.include_router(jobs_router)
     app.include_router(logs_router)
     app.include_router(databases_router)
+    app.include_router(examples_router)
     if operation_coordinator is None:
         try:
             app.state.operation_coordinator.reconcile_after_restart()

@@ -85,6 +85,7 @@ The command validates the pinned Compose project, external `ddu_inference_bus` n
 - Job history, status, results, comparisons, and cleanup previews require an administrator session. Job start, cancellation, and confirmed cleanup also require a CSRF token.
 - `GET /api/control/v1/logs` requires an administrator session and returns a bounded, redacted tail from the fixed `vllm` Compose service.
 - `GET /api/control/v1/databases` requires an administrator session. Adding, updating, checking, revealing, or removing a database monitor requires an administrator session and CSRF token.
+- `GET /api/control/v1/examples` requires an administrator session. Fixed example start/stop and chat/transcribe/synthesize proxy routes require the administrator session and CSRF token; the browser receives neither the consumer token nor upstream model addresses.
 
 ## Inference operations
 
@@ -93,6 +94,14 @@ The Models page offers fixed Start, Stop, Restart, and Apply Profile actions. Ea
 The dashboard records desired state and the latest operation in local SQLite metadata. Desired state starts as `stopped`, and a deliberate Stop remains stopped after a controller or browser restart; starting inference always requires an operator action. Long model loading is shown as an active operation. Candidate failures report whether a last-known-good profile was restored. Profile activation waits for container health and the fixed `/health` and `/v1/models` contract checks before reporting success. Those checks do not send prompts or collect request/response content.
 
 The fixed controller operations can start, stop, or recreate only the validated `vllm` service in the explicitly configured project. They do not run `compose down`, remove containers or volumes, change networks, publish host ports, or accept arbitrary commands. A profile switch preserves the model-cache volume and the stable `ddu-llm` alias. Dashboard restart reconciliation is read-only and does not start or stop inference automatically.
+
+## Chat + Voice example
+
+The Examples page launches only the repository-owned `chat-voice` consumer service. The first start builds its local image; subsequent starts reuse it. The consumer is published only on `127.0.0.1:8766` for the dashboard controller's fixed proxy and shares the external private `ddu_inference_bus` network. It does not include or launch model services. Chat requires the healthy `ddu-narrator` alias; voice additionally requires both `ddu-stt` and `ddu-tts`. See [EXAMPLES.md](EXAMPLES.md) for the build/start/stop flow, recovery, preset behavior, and troubleshooting.
+
+The example holds the shared activity gate while its container may run, preventing lifecycle changes and benchmarks from competing with the session. It stops after 30 minutes without an app request. A controller restart loses the per-run app credential; if Docker still reports the fixed container, the page requires an explicit Stop and confirmed exit before a new session can start. The controller does not auto-start the example during reconciliation.
+
+Chat and speech content is transient. Prompts, replies, recordings, transcripts, and history stay in page memory and are cleared on reset or reload/navigation; dashboard SQLite retains bounded lifecycle state, dependency readiness, sanitized error categories, and timestamps. Per-turn elapsed time appears in the page and is not persisted. The consumer suppresses request-body logging. Voice is turn-based: record, transcribe, review/edit, send, and optionally play the reply. It is not real-time or full-duplex. The Fast/Balanced/Quality slider selects fixed request presets for the same served model; Quality does not guarantee correctness. See [EXAMPLES_ACCEPTANCE.md](EXAMPLES_ACCEPTANCE.md) for the separate human host checklist and content-free evidence fields.
 
 ## Predefined checks, benchmarks, and history
 
@@ -128,6 +137,14 @@ npm --prefix .\dashboard\frontend test
 npm --prefix .\dashboard\frontend run typecheck
 npm --prefix .\dashboard\frontend run build
 docker compose --env-file .env.example config --quiet
+docker compose -f .\examples\compose.yaml config --quiet
+```
+
+Example consumer tests are run without live model services:
+
+```powershell
+\.\dashboard\backend\.venv\Scripts\python.exe -m pip install --require-hashes -r .\examples\chat-voice\requirements.lock
+.\dashboard\backend\.venv\Scripts\python.exe -m pytest examples/chat-voice/tests -q
 ```
 
 ## Pending manual host acceptance
@@ -145,6 +162,8 @@ These checks require a separately authorized operator window. Do not stop, resta
 The current-user Scheduled Task was installed and launched from the stable `D:\projects\Local-AI-API-LITE` checkout on 2026-10-29. Its liveness endpoint and loopback binding were verified; first-run administrator setup is still required. Sign-in/sign-out lifecycle, Docker Desktop loss/recovery, cross-user DPAPI, and live inference loading/rollback checks remain pending. See [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated host evidence. Existing Phase 0 values below are historical baseline observations only.
 
 See [DASHBOARD_SECURITY.md](DASHBOARD_SECURITY.md) for the security boundary and [DASHBOARD_ACCEPTANCE.md](DASHBOARD_ACCEPTANCE.md) for the dated automated evidence and pending operator checks.
+
+For the interactive example's operation, privacy contract, and human acceptance record, see [EXAMPLES.md](EXAMPLES.md) and [EXAMPLES_ACCEPTANCE.md](EXAMPLES_ACCEPTANCE.md).
 
 ## Phase 0 baseline capture
 

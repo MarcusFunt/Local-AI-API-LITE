@@ -1,10 +1,10 @@
 # Local dashboard
 
-The dashboard is a local React/Vite UI and a small FastAPI controller. It provides authenticated status, inference lifecycle controls, bounded jobs and history, sanitized service logs, and optional read-only PostgreSQL monitoring. It binds only to loopback. Start, stop, restart, and profile actions require a stable Compose project path in local settings and an explicit confirmation.
+The dashboard is a local React/Vite UI and a small FastAPI controller. It provides authenticated status, inference lifecycle controls, bounded jobs and history, sanitized service logs, optional read-only PostgreSQL monitoring, and the Chat + Voice example. It binds only to loopback. Start, stop, restart, and profile actions require a stable Compose project path in local settings and an explicit confirmation.
 
 See the [operator runbook](../docs/DASHBOARD.md) for Windows installation, administrator setup and recovery, runtime paths, security boundaries, and the manual host acceptance checklist.
 
-See the [security review](../docs/DASHBOARD_SECURITY.md) and [acceptance record](../docs/DASHBOARD_ACCEPTANCE.md) for the current boundaries, automated evidence, and pending host checks.
+See the [Chat + Voice instructions](../docs/EXAMPLES.md) and [human acceptance checklist](../docs/EXAMPLES_ACCEPTANCE.md) for example operation and its privacy limits. See the [security review](../docs/DASHBOARD_SECURITY.md) and [acceptance record](../docs/DASHBOARD_ACCEPTANCE.md) for dashboard boundaries, automated evidence, and pending host checks.
 
 ## Requirements
 

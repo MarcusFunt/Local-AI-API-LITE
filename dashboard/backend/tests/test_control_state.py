@@ -70,3 +70,22 @@ def test_benchmark_gate_rejects_concurrent_inference_mutation(tmp_path):
 
     assert benchmark.acquire("benchmark", "benchmark-one", now=10, lease_seconds=60)
     assert not inference.acquire("inference", "start-one", now=11, lease_seconds=60)
+
+
+def test_permanent_reservation_stays_owned_until_explicit_release(tmp_path):
+    control_state = load_dashboard_module("control_state")
+    metadata = MetadataStore(tmp_path / "dashboard.sqlite3")
+    example_gate = control_state.ActivityGate(metadata)
+    profile_gate = control_state.ActivityGate(MetadataStore(metadata.path))
+
+    assert example_gate.reserve("example", "example:chat-voice", now=100)
+    assert not profile_gate.acquire("inference", "profile-change", now=10**12, lease_seconds=60)
+    assert example_gate.current() == {
+        "operation_id": "example:chat-voice",
+        "kind": "example",
+        "lease_until": None,
+        "status": "active",
+    }
+
+    example_gate.release("example:chat-voice")
+    assert profile_gate.acquire("inference", "profile-change", now=10**12, lease_seconds=60)

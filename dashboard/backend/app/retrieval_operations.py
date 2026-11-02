@@ -45,7 +45,7 @@ def _timestamp(value: float | None) -> str | None:
     return datetime.fromtimestamp(value, UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _prepare_schema(metadata: MetadataStore) -> None:
+def ensure_retrieval_operation_schema(metadata: MetadataStore) -> None:
     if metadata.schema_version() < 2:
         metadata.migrate(2, AUTH_SCHEMA)
     if metadata.schema_version() < 3:
@@ -66,7 +66,7 @@ class RetrievalOperationStore:
     def __init__(self, metadata: MetadataStore, clock: Callable[[], float] = time.time) -> None:
         self.metadata = metadata
         self.clock = clock
-        _prepare_schema(metadata)
+        ensure_retrieval_operation_schema(metadata)
         with self.metadata.transaction() as connection:
             for service in _SERVICE_NAMES:
                 connection.execute(

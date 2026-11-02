@@ -51,6 +51,7 @@ jobs:
           ruff check scripts tests
           dashboard/backend/app dashboard/backend/tests
           services/retrieval/retrieval_worker
+          examples/chat-voice/app examples/chat-voice/tests
 
       - name: Lint YAML
         run: >-

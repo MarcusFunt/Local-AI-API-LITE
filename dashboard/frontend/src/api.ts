@@ -167,6 +167,47 @@ export interface DatabaseListResponse {
   databases: DatabaseStatus[];
 }
 
+export type ExampleState =
+  | "stopped"
+  | "starting"
+  | "ready"
+  | "stopping"
+  | "failed"
+  | "recovery-required";
+
+export interface ExampleDependencyStatus {
+  state: "ready" | "stopped" | "unavailable" | "unknown";
+  active_profile: string | null;
+  phase: string | null;
+  observed_at: string | null;
+}
+
+export interface ExamplePublicStatus {
+  id: "chat-voice";
+  name: "Chat + Voice";
+  state: ExampleState;
+  chat_dependency: ExampleDependencyStatus;
+  voice_dependency: ExampleDependencyStatus;
+  missing_dependencies: string[];
+  started_at: string | null;
+  last_error_category: string | null;
+  idle_expires_at: string | null;
+  activity_available: boolean;
+}
+
+export interface ExampleChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export type ExampleChatPreset = "fast" | "balanced" | "quality";
+
+export interface ExampleChatReply {
+  text: string;
+  elapsed_ms: number;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
 export interface ModelConfiguration {
   model_id: string;
   model_revision: string | null;
@@ -349,6 +390,110 @@ export function getLogs(tail = 100): Promise<LogsResponse> {
 
 export function getDatabases(): Promise<DatabaseListResponse> {
   return getJson<DatabaseListResponse>("/api/control/v1/databases");
+}
+
+export function getExamples(): Promise<ExamplePublicStatus[]> {
+  return getJson<{ examples: ExamplePublicStatus[] }>("/api/control/v1/examples")
+    .then((result) => result.examples);
+}
+
+async function exampleMutation<T>(
+  path: string,
+  csrfToken: string,
+  body?: Record<string, unknown>,
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    credentials: "same-origin",
+    cache: "no-store",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export function startExample(csrfToken: string, signal?: AbortSignal): Promise<ExamplePublicStatus> {
+  return exampleMutation<ExamplePublicStatus>(
+    "/api/control/v1/examples/chat-voice/start",
+    csrfToken,
+    undefined,
+    signal,
+  );
+}
+
+export function stopExample(csrfToken: string, signal?: AbortSignal): Promise<ExamplePublicStatus> {
+  return exampleMutation<ExamplePublicStatus>(
+    "/api/control/v1/examples/chat-voice/stop",
+    csrfToken,
+    undefined,
+    signal,
+    30_000,
+  );
+}
+
+export function sendChatTurn(
+  csrfToken: string,
+  preset: ExampleChatPreset,
+  messages: ExampleChatMessage[],
+  signal?: AbortSignal,
+): Promise<ExampleChatReply> {
+  return exampleMutation<ExampleChatReply>(
+    "/api/control/v1/examples/chat-voice/chat",
+    csrfToken,
+    { preset, messages },
+    signal,
+    130_000,
+  );
+}
+
+export async function transcribeAudio(
+  csrfToken: string,
+  audio: Blob,
+  signal?: AbortSignal,
+): Promise<{ text: string }> {
+  const form = new FormData();
+  const extension = audio.type.includes("ogg") ? "ogg" : audio.type.includes("wav") ? "wav" : audio.type.includes("mp4") ? "mp4" : "webm";
+  form.append("file", audio, `recording.${extension}`);
+  const response = await fetch("/api/control/v1/examples/chat-voice/transcribe", {
+    method: "POST",
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    credentials: "same-origin",
+    cache: "no-store",
+    body: form,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(125_000)]) : AbortSignal.timeout(125_000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  return (await response.json()) as { text: string };
+}
+
+export async function synthesizeReply(
+  csrfToken: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const response = await fetch("/api/control/v1/examples/chat-voice/synthesize", {
+    method: "POST",
+    headers: {
+      Accept: "audio/wav",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    credentials: "same-origin",
+    cache: "no-store",
+    body: JSON.stringify({ text }),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  return await response.blob();
 }
 
 async function databaseMutation<T>(

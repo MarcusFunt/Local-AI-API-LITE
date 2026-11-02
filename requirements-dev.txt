@@ -3,4 +3,5 @@ PyYAML>=6,<7
 ruff>=0.14,<1
 yamllint>=1.37,<2
 python-multipart>=0.0.33,<1
+av==18.1.0
 -e ./dashboard/backend[dev]

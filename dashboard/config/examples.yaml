@@ -1,0 +1,26 @@
+version: 1
+examples:
+  - id: chat-voice
+    name: Chat + Voice
+    description: Try the local narrator with text chat and optional turn-based Danish voice.
+    compose:
+      project: local-ai-api-lite-examples
+      file: ../../examples/compose.yaml
+      service: chat-voice
+      host_ip: 127.0.0.1
+      host_port: 8766
+      container_port: 8080
+    dependencies:
+      chat: ddu-narrator
+      voice:
+        - ddu-stt
+        - ddu-tts
+    limits:
+      idle_timeout_seconds: 1800
+      cpu: 1.0
+      memory_bytes: 1073741824
+      pids: 128
+      tmpfs_bytes: 67108864
+      max_audio_bytes: 25000000
+      max_audio_seconds: 120
+      max_tts_characters: 4000

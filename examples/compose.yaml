@@ -1,0 +1,50 @@
+name: local-ai-api-lite-examples
+
+services:
+  chat-voice:
+    image: local-ai-api-lite-chat-voice:latest
+    build:
+      context: ./chat-voice
+      dockerfile: Dockerfile
+    environment:
+      EXAMPLE_UPSTREAM_TOKEN: ${EXAMPLE_UPSTREAM_TOKEN:-}
+    ports:
+      - target: 8080
+        published: "8766"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    networks:
+      - inference
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=67108864
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 128
+    init: true
+    stop_grace_period: 10s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "2"
+
+networks:
+  inference:
+    name: ddu_inference_bus
+    external: true
