@@ -269,6 +269,27 @@ def test_controller_serves_a_frontend_static_fixture(dashboard_root, tmp_path):
     assert '<div id="root"></div>' in response.text
 
 
+def test_example_spa_paths_serve_index_and_unknown_path_is_404(tmp_path):
+    api = load_dashboard_module("api")
+    frontend_dist = tmp_path / "dist"
+    frontend_dist.mkdir()
+    marker = "example-spa-entry-marker"
+    (frontend_dist / "index.html").write_text(marker, encoding="utf-8")
+    client = AsgiTestClient(
+        api.create_app(
+            frontend_dist=frontend_dist,
+            metadata_path=tmp_path / "metadata.sqlite3",
+        )
+    )
+
+    for path in ("/examples", "/examples/chat-voice"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert marker in response.text
+
+    assert client.get("/not-an-app-route").status_code == 404
+
+
 def test_invalid_profile_registry_returns_a_safe_unavailable_response(dashboard_root, tmp_path):
     api = load_dashboard_module("api")
     registry = tmp_path / "profiles.yaml"
