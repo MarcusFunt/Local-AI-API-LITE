@@ -586,6 +586,7 @@ describe("ExamplesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(screen.getByText("Waiting for a complete reply from the local model.").getAttribute("role")).toBe("status");
+    expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toBe("Voice controls paused during chat");
     expect(document.querySelector(".chat-request-spinner")?.getAttribute("aria-hidden")).toBe("true");
     expect(screen.getByRole("timer", { name: "Elapsed time 00:00" })).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(10_000); });
