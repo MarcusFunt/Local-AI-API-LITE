@@ -234,6 +234,32 @@ def test_stt_rejects_unsupported_language(language):
     assert decoded == []
 
 
+@pytest.mark.parametrize("fields", [{}, {"language": ""}], ids=["missing", "empty"])
+def test_stt_rejects_missing_or_empty_language_before_decode_or_inference(fields):
+    decoded, transcribed = [], []
+
+    def decode(_file, _limit):
+        decoded.append(True)
+        return b"decoded audio", 1.25
+
+    class Transcriber:
+        def transcribe(self, audio, language):
+            transcribed.append((audio, language))
+            return {"text": "unexpected", "language": language}
+
+    app = create_stt_app(adapter_factory=Transcriber, audio_decoder=decode)
+    with _client(app) as client:
+        response = client.post(
+            "/v1/audio/transcriptions",
+            data={"model": "ddu-stt", **fields},
+            files={"file": ("sample.wav", b"sample audio", "audio/wav")},
+        )
+    assert response.status_code == 422
+    assert response.json() == {"error": {"code": "invalid_request", "message": "Request is invalid."}}
+    assert decoded == []
+    assert transcribed == []
+
+
 @pytest.mark.parametrize(
     ("language", "voice_id", "samples"),
     [("da", "da_DK-talesyntese-medium", b"\x01\x00"), ("en", "en_US-ljspeech-medium", b"\x02\x00")],
