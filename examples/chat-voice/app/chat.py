@@ -12,11 +12,16 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .errors import ServiceError
+from .languages import Language
 
 LOGGER = logging.getLogger("chat_voice.chat")
 CHAT_URL = "http://ddu-llm:8080/v1/chat/completions"
 MODEL_ALIAS = "ddu-narrator"
 SYSTEM_PROMPT = "You are a helpful assistant. Be clear, direct, and honest about uncertainty."
+LANGUAGE_PROMPTS: dict[Language, str] = {
+    "da": SYSTEM_PROMPT + " Respond in Danish.",
+    "en": SYSTEM_PROMPT + " Respond in English.",
+}
 MAX_CHAT_RESPONSE_BYTES = 256_000
 
 
@@ -43,6 +48,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    language: Language
     preset: Literal["fast", "balanced", "quality"]
     messages: list[ChatMessage] = Field(min_length=1, max_length=16)
 
@@ -85,7 +91,7 @@ class ChatService:
             payload = {
                 "model": MODEL_ALIAS,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": LANGUAGE_PROMPTS[request.language]},
                     *[message.model_dump(mode="json") for message in request.messages],
                 ],
                 "stream": False,
