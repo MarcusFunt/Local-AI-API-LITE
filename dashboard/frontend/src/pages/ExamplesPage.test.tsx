@@ -86,6 +86,59 @@ describe("ExamplesPage", () => {
   });
 
   it.each([
+    "Explain how a local AI model works.",
+    "Help me plan a small coding project.",
+    "Give me three ideas to try in this chat.",
+  ])("fills the composer with '%s' without sending", async (prompt) => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole("button", { name: prompt }));
+    expect(composer.value).toBe(prompt);
+    expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
+    expect(screen.queryByRole("article", { name: "Your message" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("names each message by its speaker and removes starters after sending", async () => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" });
+    fireEvent.change(composer, { target: { value: "My local question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("article", { name: "Assistant reply" })).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Your message" })).getByText("My local question")).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Assistant reply" })).getByText("A useful reply")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Explain how a local AI model works." })).toBeNull();
+  });
+
+  it("keeps a long reply intact with its timing and working speech action", async () => {
+    installAudioUrls();
+    const longReply = `First paragraph.\n\n${"A detailed local answer. ".repeat(100)}\n${"x".repeat(300)}\nFinal sentence.`;
+    apiMocks.sendChatTurn.mockResolvedValue({ text: longReply, elapsed_ms: 876, usage: {} });
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "Message" }), { target: { value: "Explain in detail" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    const reply = within(await screen.findByRole("article", { name: "Assistant reply" }));
+    expect(reply.getByText((_, element) => element?.tagName === "P" && element.textContent === longReply)).toBeTruthy();
+    expect(reply.getByText("876 ms")).toBeTruthy();
+    const speak = reply.getByRole("button", { name: "Speak reply" }) as HTMLButtonElement;
+    expect(speak.disabled).toBe(false);
+    fireEvent.click(speak);
+    expect(await screen.findByLabelText("Spoken reply audio")).toBeTruthy();
+    expect(apiMocks.synthesizeReply).toHaveBeenCalledWith("csrf-value", longReply, "da", expect.any(AbortSignal));
+  });
+
+  it("announces a timeout-style failure and restores the prompt for retry", async () => {
+    apiMocks.sendChatTurn.mockRejectedValue(new Error("Request timed out"));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "A request that times out" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Your message is back in the composer so you can retry.");
+    expect(composer.value).toBe("A request that times out");
+    expect(screen.queryByRole("timer")).toBeNull();
+  });
+
+  it.each([
     { state: "ready", label: "Ready", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
     { state: "starting", label: "Preparing", start: "Start example", startDisabled: true, stop: "Stop example", stopDisabled: false },
     { state: "stopping", label: "Stopping", start: "Start example", startDisabled: true, stop: "Stopping…", stopDisabled: true },
@@ -386,10 +439,10 @@ describe("ExamplesPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "A slow request" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(screen.getByText("Waiting for a complete reply from the local model.")).toBeTruthy();
+    expect(screen.getByText("Waiting for a complete reply from the local model.").getAttribute("role")).toBe("status");
     expect(screen.getByRole("timer", { name: "Elapsed time 00:00" })).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(10_000); });
-    expect(screen.getByText("Still working on your reply.")).toBeTruthy();
+    expect(screen.getByText("Still working on your reply.").getAttribute("role")).toBe("status");
     expect(screen.getByRole("timer", { name: "Elapsed time 00:10" })).toBeTruthy();
 
     await act(async () => {

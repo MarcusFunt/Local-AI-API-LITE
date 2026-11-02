@@ -20,6 +20,11 @@ const MAX_RECORDING_MS = 120_000;
 const MAX_AUDIO_BYTES = 25_000_000;
 const MAX_TTS_CHARACTERS = 4000;
 const CHAT_PRESETS: ExampleChatPreset[] = ["fast", "balanced", "quality"];
+const STARTER_PROMPTS = [
+  "Explain how a local AI model works.",
+  "Help me plan a small coding project.",
+  "Give me three ideas to try in this chat.",
+];
 const PRESET_COPY: Record<ExampleChatPreset, string> = {
   fast: "Shorter answers, prioritizes response time.",
   balanced: "The default tradeoff between response time and answer depth.",
@@ -698,8 +703,21 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
       <div className="conversation-log" aria-live="polite" aria-label="Conversation">
         {messages.length === 0
-          ? <p className="conversation-empty">Ask a real question or describe a task to try. The conversation disappears when you reload or clear this session.</p>
-          : messages.map((message) => <article className={`conversation-message conversation-${message.role}`} key={message.id}>
+          ? <div className="conversation-empty">
+            <h3>Start a conversation</h3>
+            <p>Ask a question or choose a starting point. Edit it in the message field, then send when ready.</p>
+            <div className="conversation-starters" role="group" aria-label="Starter prompts">
+              {STARTER_PROMPTS.map((prompt) => <button
+                className="conversation-starter"
+                type="button"
+                key={prompt}
+                disabled={!canChat}
+                onClick={() => setDraft(prompt)}
+              >{prompt}</button>)}
+            </div>
+            <p>The conversation disappears when you reload or clear this session.</p>
+          </div>
+          : messages.map((message) => <article className={`conversation-message conversation-${message.role}`} aria-label={message.role === "user" ? "Your message" : "Assistant reply"} key={message.id}>
             <div className="conversation-message-meta">{message.role === "user" ? "YOU" : "Ddu-narrator"}</div>
             <p>{message.content}</p>
             {message.role === "assistant" && <div className="assistant-actions">
