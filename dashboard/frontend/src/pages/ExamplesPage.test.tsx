@@ -442,11 +442,17 @@ describe("ExamplesPage", () => {
   });
 
   it("keeps chat closed while stop is pending and refreshes status after a timeout", async () => {
+    let resolveInitialStatus: ((statuses: ExamplePublicStatus[]) => void) | undefined;
     let rejectStop: ((error: Error) => void) | undefined;
-    apiMocks.getExamples.mockResolvedValueOnce([makeStatus("ready")]).mockResolvedValueOnce([makeStatus("stopping")]);
+    apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveInitialStatus = resolve; }))
+      .mockResolvedValueOnce([makeStatus("stopping")]);
     apiMocks.stopExample.mockImplementation(() => new Promise((_resolve, reject) => { rejectStop = reject; }));
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Stop example" }));
+    const stopButton = await screen.findByRole("button", { name: "Stop example" });
+    expect((stopButton as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => resolveInitialStatus?.([makeStatus("ready")]));
+    await waitFor(() => expect((stopButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(stopButton);
 
     expect(await screen.findByRole("button", { name: /Stopping/ })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
