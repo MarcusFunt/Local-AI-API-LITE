@@ -26,6 +26,9 @@ def test_registry_exposes_only_the_fixed_chat_voice_example_and_limits():
     assert set(examples) == {"chat-voice"}
     example = examples["chat-voice"]
     assert example.name == "Chat + Voice"
+    assert "Danish or English" in example.description
+    assert "chat, transcription, and spoken replies" in example.description
+    assert "Danish on reload" in example.description
     assert example.compose_project == "local-ai-api-lite-examples"
     assert example.compose_service == "chat-voice"
     assert example.chat_model_alias == "ddu-narrator"

@@ -5,20 +5,28 @@ import yaml
 from conftest import load_dashboard_module
 
 
-def test_speech_profile_registry_exposes_pinned_danish_cpu_services():
+def test_speech_profile_registry_exposes_pinned_danish_and_english_cpu_services():
     profiles_module = load_dashboard_module("profiles")
 
     profiles = profiles_module.load_speech_profiles()
 
     assert [profile["id"] for profile in profiles] == ["danish-speech-cpu"]
     profile = profiles[0]
-    assert profile["language"] == "Danish (da-DK)"
+    assert profile["name"] == "Danish + English speech / CPU"
+    assert profile["language"] == "Danish (da) / English (en)"
     assert profile["stt_alias"] == "ddu-stt"
     assert profile["stt_model_id"] == "Systran/faster-whisper-small"
     assert profile["stt_model_revision"] == "536b0662742c02347bc0e980a01041f333bce120"
     assert profile["tts_alias"] == "ddu-tts"
-    assert profile["tts_voice_id"] == "da_DK-talesyntese-medium"
-    assert profile["tts_model_revision"] == "320d5f7f7751a17ef6512d5c23863056c6a11c0f"
+    assert profile["tts_voice_id"] == "da: da_DK-talesyntese-medium; en: en_US-ljspeech-medium"
+    assert profile["tts_model_revision"] == "375a0fe641dea077c2a47b4e9a056d6da521eed3"
+    assert profile["tts_runtime_license"] == "GPL-3.0-or-later"
+    assert profile["tts_voice_dataset_license"] == "Danish talesyntese: CC0; English LJ Speech: public domain (per pinned voice model cards)"
+    assert "Danish and English" in profile["description"]
+    assert profile["compose_project"] == "local-ai-api-lite-speech"
+    assert profile["compose_profile"] == "danish-speech"
+    assert (profile["stt_cpu_limit"], profile["stt_memory_limit"]) == (4.0, "4g")
+    assert (profile["tts_cpu_limit"], profile["tts_memory_limit"]) == (1.0, "1g")
     assert profile["cpu_only"] is True
     assert profile["validation_state"] == "implementation-unverified"
 
