@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -416,9 +417,14 @@ def validate_local_request(request: Request) -> None:
     try:
         origin_url = urlsplit(origin)
         request_url = request.url
+        request_origin = f"{request_url.scheme}://{request_url.netloc}".casefold()
+        configured_origins = _configured_trusted_origins()
         valid = (
-            request_url.hostname in {"localhost", "127.0.0.1", "::1"}
-            and origin_url.hostname in {"localhost", "127.0.0.1", "::1"}
+            (
+                request_url.hostname in {"localhost", "127.0.0.1", "::1"}
+                or request_origin in configured_origins
+            )
+            and request_url.netloc.casefold() == host.casefold()
             and origin_url.netloc.casefold() == host.casefold()
             and origin_url.scheme == request_url.scheme
             and not origin_url.username
@@ -431,6 +437,28 @@ def validate_local_request(request: Request) -> None:
         valid = False
     if not valid:
         raise HTTPException(status_code=403, detail="Request verification failed")
+
+
+def _configured_trusted_origins() -> set[str]:
+    origins: set[str] = set()
+    for value in os.environ.get("DASHBOARD_TRUSTED_ORIGINS", "").split(","):
+        try:
+            origin = urlsplit(value.strip())
+            if (
+                origin.scheme.casefold() == "https"
+                and origin.hostname
+                and origin.hostname.casefold().endswith(".ts.net")
+                and origin.port is not None
+                and not origin.username
+                and not origin.password
+                and origin.path in {"", "/"}
+                and not origin.query
+                and not origin.fragment
+            ):
+                origins.add(f"{origin.scheme}://{origin.netloc}".casefold())
+        except ValueError:
+            continue
+    return origins
 
 
 def _validate_password(password: str) -> None:

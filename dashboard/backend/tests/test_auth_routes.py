@@ -142,6 +142,30 @@ def test_secure_cookie_is_set_for_https(tmp_path):
     assert "secure" in login.headers["set-cookie"].casefold()
 
 
+def test_login_accepts_only_configured_tailscale_origin(tmp_path, monkeypatch):
+    origin = "https://marcus-computer.example.ts.net:10000"
+    monkeypatch.setenv("DASHBOARD_TRUSTED_ORIGINS", origin)
+    local_client = _client(tmp_path)
+    local_client.setup_admin(PASSWORD)
+
+    tailscale_client = _client(tmp_path, base_url=origin)
+    login = tailscale_client.post("/auth/login", json_body={"password": PASSWORD})
+
+    assert login.status_code == 200
+    assert "secure" in login.headers["set-cookie"].casefold()
+
+
+def test_tailscale_origin_allowlist_does_not_trust_other_ports(tmp_path, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_TRUSTED_ORIGINS", "https://marcus-computer.example.ts.net:10000")
+    local_client = _client(tmp_path)
+    local_client.setup_admin(PASSWORD)
+
+    other_port_client = _client(tmp_path, base_url="https://marcus-computer.example.ts.net:10001")
+    login = other_port_client.post("/auth/login", json_body={"password": PASSWORD})
+
+    assert login.status_code == 403
+
+
 def test_wrong_host_or_origin_is_rejected(tmp_path):
     client = _client(tmp_path)
     response = client.post(
