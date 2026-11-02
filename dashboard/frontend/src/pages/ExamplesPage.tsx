@@ -791,7 +791,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         <div className="voice-control-copy"><strong>Turn-based {language === "da" ? "Danish" : "English"} voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
         <div className={`recording-state${recording ? " recording-state-active" : ""}`}>
           {recording && <span className="recording-dot" aria-hidden="true" />}
-          <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : transcribing ? "Transcribing speech…" : voiceReady ? "Ready to record" : "Voice unavailable"}</span>
+          <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : transcribing ? "Transcribing speech…" : voiceError ? "Voice needs attention" : voiceReady ? "Ready to record" : "Voice unavailable"}</span>
           {recording && <span role="timer" aria-label={`Recording elapsed time ${formatElapsed(recordingElapsedMs)}`} aria-live="off">{formatElapsed(recordingElapsedMs)} / 02:00</span>}
         </div>
         <button

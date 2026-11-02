@@ -183,6 +183,38 @@ describe("ExamplesPage", () => {
     expect(disclosure.open).toBe(false);
   });
 
+  it("keeps workspace controls keyboard reachable and labels live voice feedback", async () => {
+    installRecorder();
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByRole("textbox", { name: "Message" });
+
+    const focusableControls = [
+      screen.getByText("Services and status details", { selector: "summary" }),
+      screen.getByRole("combobox", { name: "Language" }),
+      screen.getByRole("radio", { name: "Balanced" }),
+      screen.getByRole("textbox", { name: "Message" }),
+      screen.getByRole("button", { name: "Stop example" }),
+      screen.getByRole("button", { name: "Push to talk" }),
+    ];
+    for (const control of focusableControls) {
+      expect((control as HTMLElement).tabIndex).not.toBe(-1);
+    }
+
+    const pushToTalk = focusableControls.at(-1) as HTMLButtonElement;
+    pushToTalk.focus();
+    expect(document.activeElement).toBe(pushToTalk);
+    fireEvent.keyDown(pushToTalk, { key: "Enter" });
+
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    const voiceStatus = screen.getByRole("status", { name: "Voice input status" });
+    expect(voiceStatus.getAttribute("aria-live")).toBe("polite");
+    expect(voiceStatus.textContent).toBe("Recording");
+    expect(document.querySelector(".recording-dot")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" }).getAttribute("aria-live")).toBe("off");
+    fireEvent.keyUp(pushToTalk, { key: "Enter" });
+    expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for a successful catalog start to become ready before opening the workspace", async () => {
     const onOpenWorkspace = vi.fn();
     apiMocks.getExamples.mockResolvedValue([makeStatus("stopped")]);
@@ -538,6 +570,7 @@ describe("ExamplesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(screen.getByText("Waiting for a complete reply from the local model.").getAttribute("role")).toBe("status");
+    expect(document.querySelector(".chat-request-spinner")?.getAttribute("aria-hidden")).toBe("true");
     expect(screen.getByRole("timer", { name: "Elapsed time 00:00" })).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(10_000); });
     expect(screen.getByText("Still working on your reply.").getAttribute("role")).toBe("status");
@@ -759,6 +792,7 @@ describe("ExamplesPage", () => {
     fireEvent.pointerDown(pushToTalk);
 
     expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/allow microphone access.*browser settings/i);
+    expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toBe("Voice needs attention");
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
