@@ -480,6 +480,11 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
     setVoiceError(null);
     setVoiceNotice(null);
     try {
+      if (window.isSecureContext === false) {
+        pointerHeldRef.current = false;
+        setVoiceError("Microphone recording requires HTTPS. Open this page from the Tailscale HTTPS address and allow microphone access in your browser's site settings.");
+        return;
+      }
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
         pointerHeldRef.current = false;
         setVoiceError("This browser does not support push-to-talk audio recording.");
@@ -519,7 +524,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
       pointerHeldRef.current = false;
       releaseTracks();
       setRecording(false);
-      setVoiceError("Microphone access was denied. Check browser permissions and try again.");
+      setVoiceError("Microphone access was denied. Allow microphone access for this site in your browser settings, then try again.");
     }
   };
 
@@ -722,7 +727,10 @@ export function ExamplesPage({ csrfToken, onSessionExpired }: {
         >{transcribing ? "Transcribing…" : recording ? "Release to transcribe" : "Hold to talk"}</button>
         <label className="speak-replies-toggle"><input type="checkbox" checked={speakReplies} onChange={(event) => setSpeakReplies(event.currentTarget.checked)} disabled={!voiceReady} /> Speak replies automatically</label>
       </div>
-      {voiceError && <p className="example-error" role="alert">{voiceError}</p>}
+      {voiceError && <p className="example-error" role="alert">
+        {voiceError}
+        {window.isSecureContext === false && window.location.hostname.endsWith(".ts.net") && <> <a href={`https://${window.location.host}${window.location.pathname}${window.location.search}`}>Open the Tailscale HTTPS page</a></>}
+      </p>}
       {voiceNotice && <p className="example-notice" role="status">{voiceNotice}</p>}
     </section>}
 

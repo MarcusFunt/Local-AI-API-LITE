@@ -325,7 +325,25 @@ describe("ExamplesPage", () => {
     resolveStop?.(makeStatus("stopping"));
   });
 
-  it("reports microphone denial without keeping a recording stream", async () => {
+  it("explains that phone microphone recording needs the Tailscale HTTPS page", async () => {
+    class FakeRecorder {
+      static isTypeSupported() { return true; }
+    }
+    vi.stubGlobal("isSecureContext", false);
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [] });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.pointerDown(await screen.findByRole("button", { name: /push to talk/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/HTTPS/i);
+    expect(alert.textContent).toMatch(/Tailscale/i);
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("reports microphone denial with browser settings guidance and no transcription", async () => {
     class FakeRecorder {
       static isTypeSupported() { return true; }
     }
@@ -336,7 +354,7 @@ describe("ExamplesPage", () => {
     const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
     fireEvent.pointerDown(pushToTalk);
 
-    expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/microphone access was denied/i);
+    expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/allow microphone access.*browser settings/i);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
@@ -434,6 +452,39 @@ describe("ExamplesPage", () => {
     await waitFor(() => expect(track.stop).toHaveBeenCalled());
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
     expect(screen.getByText(/recording cancelled/i)).toBeTruthy();
+  });
+
+  it("stops recording when a phone pointer is released outside the hold button", async () => {
+    class FakeRecorder {
+      static isTypeSupported() { return true; }
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      mimeType = "audio/webm";
+      state = "inactive";
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["audio"], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    const track = { stop: vi.fn() };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+    });
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    apiMocks.transcribeAudio.mockResolvedValue({ text: "Released outside" });
+    render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Released outside");
   });
 
   it("automatically stops capture at the 120 second limit", async () => {
