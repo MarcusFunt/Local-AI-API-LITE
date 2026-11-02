@@ -365,17 +365,16 @@ describe("ExamplesPage", () => {
     render(<ExamplesPage csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Stop example" }));
 
-    expect(await screen.findByText("Stopping")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Stopping/ })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
     expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
     await act(async () => {
       rejectStop?.(new Error("browser request timed out"));
-      await Promise.resolve();
     });
 
-    expect(await screen.findByText("Stopping")).toBeTruthy();
+    await waitFor(() => expect(apiMocks.getExamples).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /Stopping/ })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    expect(apiMocks.getExamples).toHaveBeenCalledTimes(2);
   });
 
   it("can synthesize and play a reply through the dashboard API", async () => {

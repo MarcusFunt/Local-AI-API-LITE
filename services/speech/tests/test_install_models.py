@@ -6,7 +6,6 @@ import json
 import pytest
 from speech_worker.install_models import build_plan, install_artifacts, main
 
-
 STT_REVISION = "536b0662742c02347bc0e980a01041f333bce120"
 TTS_REVISION = "375a0fe641dea077c2a47b4e9a056d6da521eed3"
 VOICE_FILES = {

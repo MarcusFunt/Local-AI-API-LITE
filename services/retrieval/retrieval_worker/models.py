@@ -58,6 +58,7 @@ RERANKING_METADATA = ModelMetadata(
         "languages": ["multilingual", "Danish"],
         "max_pair_tokens": MAX_PAIR_TOKENS,
         "score_semantics": "raw_ranking_signal",
+        "code_revision": RERANKING_CODE_REVISION,
     },
     limits={
         "max_candidate_pairs": RERANKING_MAX_PAIRS,

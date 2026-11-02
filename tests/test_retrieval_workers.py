@@ -360,6 +360,19 @@ def test_model_metadata_is_stable_and_does_not_expose_local_paths():
     assert "path" not in response.text.lower()
 
 
+def test_reranker_metadata_includes_the_pinned_code_revision():
+    app = create_reranking_app(adapter_factory=FakeRerankerAdapter)
+
+    with TestClient(app) as client:
+        response = client.get("/v1/models")
+
+    model = response.json()["data"][0]
+    assert model["id"] == "ddu-rerank"
+    assert model["revision"] == "8215cf04918ba6f7b6a62bb44238ce2953d8831c"
+    assert model["capabilities"]["code_revision"] == "40ced75c3017eb27626c9d4ea981bde21a2662f4"
+    assert model["capabilities"]["score_semantics"] == "raw_ranking_signal"
+
+
 def test_no_interactive_api_documentation_routes_are_exposed():
     app = create_embedding_app(adapter_factory=FakeEmbeddingAdapter)
 

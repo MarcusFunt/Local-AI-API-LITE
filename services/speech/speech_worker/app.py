@@ -210,7 +210,7 @@ def create_stt_app(
         request: Request,
         file: UploadFile = File(...),  # noqa: B008 - FastAPI uses this to declare multipart input.
         model: str = Form(STT_ALIAS),
-        language: SpeechLanguage = Form(...),
+        language: SpeechLanguage = Form(...),  # noqa: B008 - FastAPI uses this to declare multipart input.
         response_format: Literal["json", "verbose_json", "text"] = Form("json"),
     ) -> Response | dict[str, Any]:
         if model != STT_ALIAS:

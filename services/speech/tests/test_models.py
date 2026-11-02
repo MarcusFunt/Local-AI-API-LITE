@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from speech_worker.app import create_tts_app
-from speech_worker.contracts import MissingArtifactError, TTS_MODEL_REVISION
+from speech_worker.contracts import TTS_MODEL_REVISION, MissingArtifactError
 from speech_worker.models import FasterWhisperAdapter, create_tts_adapter
 from starlette.testclient import TestClient
 
