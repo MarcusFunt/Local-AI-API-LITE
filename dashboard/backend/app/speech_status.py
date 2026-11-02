@@ -33,7 +33,7 @@ SERVICE_SPECS: dict[str, dict[str, str]] = {
         "alias": "ddu-tts",
         "project_name": SPEECH_PROJECT_NAME,
         "model_id": "rhasspy/piper-voices",
-        "revision": "320d5f7f7751a17ef6512d5c23863056c6a11c0f",
+        "revision": "375a0fe641dea077c2a47b4e9a056d6da521eed3",
         "repository": "rhasspy/piper-voices · da_DK-talesyntese-medium",
     },
 }
