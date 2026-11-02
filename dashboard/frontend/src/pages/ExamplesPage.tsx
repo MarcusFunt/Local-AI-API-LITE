@@ -83,8 +83,8 @@ function formatElapsed(milliseconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function StateBadge({ state }: { state: ExampleState }) {
-  return <span className={`state-badge state-${state}`}><span className="state-dot" />{STATE_LABELS[state]}</span>;
+function StateBadge({ state, announce = false }: { state: ExampleState; announce?: boolean }) {
+  return <span className={`state-badge state-${state}`} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined}><span className="state-dot" />{STATE_LABELS[state]}</span>;
 }
 
 function DependencyRow({ title, detail, state }: { title: string; detail: string; state: string }) {
@@ -664,7 +664,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       <div className={workspace ? "workspace-header" : undefined}>
         <div className="example-card-heading">
           <div><span className="eyebrow">{workspace ? "LOCAL WORKSPACE" : "EXAMPLE 01"}</span>{workspace ? <h1 id="example-title">Chat + Voice</h1> : <h2 id="example-title">Chat + Voice</h2>}</div>
-          {status ? <StateBadge state={status.state} /> : <span className="state-badge state-unknown">Loading</span>}
+          {status ? <StateBadge state={status.state} announce={workspace} /> : <span className="state-badge state-unknown" role={workspace ? "status" : undefined} aria-live={workspace ? "polite" : undefined}>Loading</span>}
         </div>
         {workspace && lifecycleActions}
       </div>

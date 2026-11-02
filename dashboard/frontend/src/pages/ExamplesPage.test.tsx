@@ -155,6 +155,22 @@ describe("ExamplesPage", () => {
     expect((workspace.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("politely announces workspace lifecycle changes", async () => {
+    apiMocks.getExamples
+      .mockResolvedValueOnce([makeStatus("starting")])
+      .mockResolvedValueOnce([makeStatus("ready")]);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
+    await workspace.findByText("Preparing", { exact: true });
+    const lifecycleStatus = workspace.getByRole("status");
+
+    expect(lifecycleStatus.textContent).toContain("Preparing");
+    expect(lifecycleStatus.getAttribute("aria-live")).toBe("polite");
+    fireEvent.click(workspace.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(lifecycleStatus.textContent).toContain("Ready"));
+    expect(await workspace.findByRole("status")).toBe(lifecycleStatus);
+  });
+
   it("keeps text chat usable and explains stopped voice dependencies in the workspace", async () => {
     apiMocks.getExamples.mockResolvedValue([makeStatus("ready", { voice: "stopped" })]);
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
