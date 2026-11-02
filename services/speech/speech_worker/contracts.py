@@ -10,7 +10,13 @@ STT_MODEL_REVISION = "536b0662742c02347bc0e980a01041f333bce120"
 TTS_ALIAS = "ddu-tts"
 TTS_MODEL_ID = "rhasspy/piper-voices"
 TTS_MODEL_REVISION = "320d5f7f7751a17ef6512d5c23863056c6a11c0f"
+# Temporary compatibility for the single-voice installer, migrated in the next task.
 TTS_VOICE_ID = "da_DK-talesyntese-medium"
+SpeechLanguage = Literal["da", "en"]
+TTS_VOICE_IDS: dict[SpeechLanguage, str] = {
+    "da": "da_DK-talesyntese-medium",
+    "en": "en_US-ljspeech-medium",
+}
 
 MAX_AUDIO_BYTES = 25_000_000
 MAX_AUDIO_SECONDS = 120
@@ -47,5 +53,5 @@ class SpeechRequest(BaseModel):
 
     model: str
     input: str = Field(min_length=1, max_length=MAX_TEXT_CHARACTERS)
-    voice: str = TTS_VOICE_ID
+    language: SpeechLanguage
     response_format: Literal["wav"] = "wav"

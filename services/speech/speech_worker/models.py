@@ -11,8 +11,9 @@ from .contracts import (
     STT_MODEL_REVISION,
     TTS_MODEL_ID,
     TTS_MODEL_REVISION,
-    TTS_VOICE_ID,
+    TTS_VOICE_IDS,
     MissingArtifactError,
+    SpeechLanguage,
 )
 
 STT_METADATA = {
@@ -21,6 +22,7 @@ STT_METADATA = {
     "owned_by": "local-ai-api-lite",
     "model_id": STT_MODEL_ID,
     "revision": STT_MODEL_REVISION,
+    "languages": ["da", "en"],
     "runtime": "faster-whisper 1.2.1 / CTranslate2 CPU int8",
 }
 TTS_METADATA = {
@@ -29,7 +31,8 @@ TTS_METADATA = {
     "owned_by": "local-ai-api-lite",
     "model_id": TTS_MODEL_ID,
     "revision": TTS_MODEL_REVISION,
-    "voice_id": TTS_VOICE_ID,
+    "languages": ["da", "en"],
+    "voice_ids": TTS_VOICE_IDS,
     "runtime": "piper-tts 1.8.0 / ONNX Runtime CPU",
 }
 
@@ -71,7 +74,7 @@ class FasterWhisperAdapter:
     def __init__(self, model: Any):
         self.model = model
 
-    def transcribe(self, audio: Any, language: str) -> dict[str, Any]:
+    def transcribe(self, audio: Any, language: SpeechLanguage) -> dict[str, Any]:
         segments, info = self.model.transcribe(
             audio,
             language=language,
@@ -92,11 +95,6 @@ class FasterWhisperAdapter:
         }
 
 
-def _voice_paths() -> tuple[Path, Path, Path]:
-    base = Path(os.environ.get("PIPER_VOICE_DIR", "/models/speech/piper"))
-    return base / "voice.onnx", base / "voice.onnx.json", base / "manifest.json"
-
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -106,40 +104,57 @@ def _sha256(path: Path) -> str:
 
 
 def create_tts_adapter() -> Any:
-    voice_path, config_path, manifest_path = _voice_paths()
+    base = Path(os.environ.get("PIPER_VOICE_DIR", "/models/speech/piper"))
+    paths: dict[SpeechLanguage, tuple[Path, Path]] = {}
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        voice_config = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("repository") != TTS_MODEL_ID
+            or manifest.get("revision") != TTS_MODEL_REVISION
+            or not isinstance(manifest.get("voices"), dict)
+        ):
+            raise MissingArtifactError()
+        for language, voice_id in TTS_VOICE_IDS.items():
+            entry = manifest["voices"].get(language)
+            voice_path = base / language / "voice.onnx"
+            config_path = base / language / "voice.onnx.json"
+            if not isinstance(entry, dict) or entry.get("voice_id") != voice_id:
+                raise MissingArtifactError()
+            voice_config = json.loads(config_path.read_text(encoding="utf-8"))
+            audio_config = voice_config.get("audio") if isinstance(voice_config, dict) else None
+            sample_rate = audio_config.get("sample_rate") if isinstance(audio_config, dict) else None
+            if (
+                type(sample_rate) is not int
+                or sample_rate <= 0
+                or entry.get("files") != {
+                    "voice.onnx": _sha256(voice_path),
+                    "voice.onnx.json": _sha256(config_path),
+                }
+            ):
+                raise MissingArtifactError()
+            paths[language] = voice_path, config_path
+    except (OSError, ValueError) as exc:
         raise MissingArtifactError() from exc
-    if (
-        manifest.get("repository") != TTS_MODEL_ID
-        or manifest.get("revision") != TTS_MODEL_REVISION
-        or manifest.get("voice_id") != TTS_VOICE_ID
-        or not voice_path.is_file()
-        or manifest.get("files") != {
-            "voice.onnx": _sha256(voice_path),
-            "voice.onnx.json": _sha256(config_path),
-        }
-        or voice_config.get("audio", {}).get("sample_rate") is None
-    ):
-        raise MissingArtifactError()
 
     from piper import PiperVoice
 
-    voice = PiperVoice.load(str(voice_path), config_path=str(config_path), use_cuda=False)
-    return PiperAdapter(voice)
+    voices = {
+        language: PiperVoice.load(str(voice_path), config_path=str(config_path), use_cuda=False)
+        for language, (voice_path, config_path) in paths.items()
+    }
+    return PiperAdapter(voices)
 
 
 class PiperAdapter:
-    def __init__(self, voice: Any):
-        self.voice = voice
+    def __init__(self, voices: dict[SpeechLanguage, Any]):
+        self.voices = voices
 
-    def synthesize_wav(self, text: str) -> bytes:
+    def synthesize_wav(self, text: str, language: SpeechLanguage) -> bytes:
         import io
         import wave
 
         audio = io.BytesIO()
         with wave.open(audio, "wb") as wav_file:
-            self.voice.synthesize_wav(text, wav_file)
+            self.voices[language].synthesize_wav(text, wav_file)
         return audio.getvalue()
