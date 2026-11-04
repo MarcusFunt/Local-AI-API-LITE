@@ -1,6 +1,12 @@
 [CmdletBinding()]
 param()
 
+# Use UTF-8 for nested pwsh process output even when launched by Windows PowerShell 5.1
+# with a legacy console code page (such as IBM437). The Unicode path assertions
+# must compare the actual names, not text decoded through the system code page.
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
 $ErrorActionPreference = "Stop"
 $auditPath = Join-Path $PSScriptRoot "audit_worktrees.ps1"
 $helperPath = Join-Path $PSScriptRoot "worktree_audit_helpers.ps1"
