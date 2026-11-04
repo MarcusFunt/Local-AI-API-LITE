@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $criticalIssues = [System.Collections.Generic.List[string]]::new()
 $report = [System.Collections.Generic.List[string]]::new()
+. (Join-Path $PSScriptRoot "worktree_audit_helpers.ps1")
 
 function Invoke-GitText {
   param([string]$Root, [string[]]$GitArguments)
@@ -61,36 +62,6 @@ function Get-PatchSha256 {
   $hash.Dispose()
   $process.Dispose()
   return [Convert]::ToHexString($digest).ToLowerInvariant()
-}
-
-function Get-PorcelainPaths {
-  param([string]$StatusText)
-  $result = [System.Collections.Generic.List[object]]::new()
-  foreach ($line in ($StatusText -split "`r?`n")) {
-    if ($line.Length -lt 4) { continue }
-    $code = $line.Substring(0, 2)
-    $path = $line.Substring(3).Trim('"')
-    $result.Add([pscustomobject]@{ Code = $code; Path = $path })
-  }
-  return $result.ToArray()
-}
-
-function Test-SecretLikeUntrackedFile {
-  param([string]$WorktreePath, [string]$RelativePath)
-  if ($RelativePath -match '(?i)(^|[\\/])\.env($|\.(?!example$))|(^|[\\/])[^\\/]*(secret|credential|token|password|private[-_]?key|vault)[^\\/]*$') {
-    return $true
-  }
-  $candidate = Join-Path $WorktreePath $RelativePath
-  if (!(Test-Path -LiteralPath $candidate -PathType Leaf)) { return $false }
-  try {
-    $item = Get-Item -LiteralPath $candidate -ErrorAction Stop
-    if ($item.Length -gt 2MB) { return $null }
-    $content = [System.IO.File]::ReadAllText($candidate)
-    return $content -match '(?im)(OPENAI_API_KEY|HUGGINGFACE_HUB_TOKEN|HF_TOKEN|API[_-]?KEY|ACCESS[_-]?TOKEN|CLIENT[_-]?SECRET|PASSWORD|BEARER)\s*[:=]\s*["'']?(?!<|REDACTED|YOUR_|PLACEHOLDER)[A-Za-z0-9._/-]{16,}' -or
-      $content -match '(?i)\b(?:sk-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,})\b'
-  } catch {
-    return $null
-  }
 }
 
 function Add-ReportLine {
@@ -227,12 +198,12 @@ Add-ReportLine "## Git worktrees"
 foreach ($worktree in $worktrees) {
   $path = Get-AbsolutePath $worktree.Path
   try {
-    $status = Invoke-GitText $path @("status", "--porcelain=v1", "-uall")
-    $statusRows = @(Get-PorcelainPaths $status)
+    $statusRows = @(Get-GitStatusPorcelainRows -Root $path)
     $statusSummary = if ($statusRows.Count -eq 0) { "clean" } else { "dirty ($($statusRows.Count) path(s))" }
     Add-ReportLine "- $path — branch $($worktree.Branch); HEAD $($worktree.Head); $statusSummary"
     foreach ($row in $statusRows) {
-      Add-ReportLine "  - $($row.Code) $($row.Path)"
+      $displayPath = if ($null -ne $row.OriginalPath) { "$($row.Path) <- $($row.OriginalPath)" } else { $row.Path }
+      Add-ReportLine "  - $($row.Code) $displayPath"
       if ($row.Code -eq "??") {
         $secretScan = Test-SecretLikeUntrackedFile $path $row.Path
         if ($secretScan -eq $true) {
@@ -245,7 +216,8 @@ foreach ($worktree in $worktrees) {
     }
   } catch {
     Add-ReportLine "- $path — status unknown"
-    $criticalIssues.Add("Worktree status could not be read")
+    Add-ReportLine "  - GIT_STATUS_UNKNOWN: complete status inventory could not be read."
+    $criticalIssues.Add("GIT_STATUS_UNKNOWN: worktree status could not be read")
   }
 }
 Add-ReportLine ""
