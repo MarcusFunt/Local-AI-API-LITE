@@ -697,6 +697,62 @@ describe("ExamplesPage", () => {
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
 
+  it.each(["Escape", "window blur", "window pointercancel"])(
+    "cancels a pending microphone permission request on %s before recording starts",
+    async (interruption) => {
+      const { stream, track, getUserMedia } = installRecorder();
+      let grantPermission!: (value: typeof stream) => void;
+      getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { grantPermission = resolve; }));
+      render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+      const push = await screen.findByRole("button", { name: "Hold to talk" });
+      fireEvent.pointerDown(push);
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      if (interruption === "Escape") fireEvent.keyDown(window, { key: "Escape" });
+      else if (interruption === "window blur") fireEvent(window, new Event("blur"));
+      else fireEvent.pointerCancel(window);
+      await act(async () => { grantPermission(stream); });
+      expect(track.stop).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("timer")).toBeNull();
+      expect(screen.getByRole("button", { name: "Hold to talk" })).toBeTruthy();
+      expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores an old permission response after a cancelled capture and a new capture", async () => {
+    const { stream: oldStream, track: oldTrack, getUserMedia } = installRecorder();
+    const nextTrack = { stop: vi.fn() };
+    const nextStream = { getTracks: () => [nextTrack] };
+    let grantOldPermission!: (value: typeof oldStream) => void;
+    getUserMedia.mockReset();
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { grantOldPermission = resolve; }));
+    getUserMedia.mockResolvedValueOnce(nextStream);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(push);
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerDown(push);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    await act(async () => { grantOldPermission(oldStream); });
+    expect(oldTrack.stop).toHaveBeenCalledTimes(1);
+    expect(nextTrack.stop).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Release to transcribe" })).toBeTruthy();
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("does not report permission denied after the user already cancelled the permission request", async () => {
+    const { getUserMedia } = installRecorder();
+    let rejectPermission!: (error: Error) => void;
+    getUserMedia.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPermission = reject; }));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const push = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(push);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await act(async () => { rejectPermission(new Error("Permission dismissed")); });
+    expect(screen.getByRole("button", { name: "Hold to talk" })).toBeTruthy();
+    expect(screen.queryByText(/microphone access was denied/i)).toBeNull();
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
   it.each(["window blur", "tab hidden"])("cancels capture and discards audio when the page is interrupted by %s", async (interruption) => {
     const track = { stop: vi.fn() };
     class FakeRecorder {

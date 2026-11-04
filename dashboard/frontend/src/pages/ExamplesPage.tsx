@@ -136,6 +136,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const previousMessagesRef = useRef<ConversationMessage[]>([]);
   const focusComposerAfterDraftRef = useRef(false);
   const pointerHeldRef = useRef(false);
+  const captureAttemptRef = useRef(0);
   const cancelStopRef = useRef(false);
   const recordingStopPendingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -242,6 +243,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   }, []);
 
   const cancelRecording = useCallback((showNotice = true) => {
+    captureAttemptRef.current += 1;
     pointerHeldRef.current = false;
     clearRecordingTimer();
     cancelStopRef.current = true;
@@ -366,29 +368,35 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   }, [refresh]);
 
   useEffect(() => {
-    if (!recording) return undefined;
-    const releaseOnWindow = () => stopRecordingRef.current();
-    const cancelOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") cancelRecording();
+    // A microphone permission prompt can remain pending before 'recording' becomes
+    // true. Register cancellation handlers for the full component lifetime so an
+    // Escape/blur/pointercancel cannot be lost in that interval or during rerenders.
+    const hasActiveCapture = () => pointerHeldRef.current || recorderRef.current !== null;
+    const releaseOnWindow = () => {
+      if (hasActiveCapture()) stopRecordingRef.current();
     };
-    const cancelOnInterruption = () => cancelRecording();
+    const cancelOnInterruption = () => {
+      if (hasActiveCapture()) cancelRecording();
+    };
+    const cancelOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") cancelOnInterruption();
+    };
     const cancelWhenHidden = () => {
       if (document.visibilityState === "hidden") cancelOnInterruption();
     };
     window.addEventListener("pointerup", releaseOnWindow);
-    const cancelOnWindow = () => cancelRecording();
-    window.addEventListener("pointercancel", cancelOnWindow);
+    window.addEventListener("pointercancel", cancelOnInterruption);
     window.addEventListener("blur", cancelOnInterruption);
     document.addEventListener("visibilitychange", cancelWhenHidden);
     window.addEventListener("keydown", cancelOnEscape);
     return () => {
       window.removeEventListener("pointerup", releaseOnWindow);
-      window.removeEventListener("pointercancel", cancelOnWindow);
+      window.removeEventListener("pointercancel", cancelOnInterruption);
       window.removeEventListener("blur", cancelOnInterruption);
       document.removeEventListener("visibilitychange", cancelWhenHidden);
       window.removeEventListener("keydown", cancelOnEscape);
     };
-  }, [cancelRecording, recording]);
+  }, [cancelRecording]);
 
   const voiceReady = status?.voice_dependency.state === "ready";
   const appReady = status?.state === "ready";
@@ -628,6 +636,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const beginRecording = async () => {
     if (!canUseVoice || pointerHeldRef.current || recordingFinalizing || recordingStopPendingRef.current) return;
+    const captureAttempt = ++captureAttemptRef.current;
     const recordingLanguage = language;
     pointerHeldRef.current = true;
     setVoiceError(null);
@@ -644,7 +653,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!mountedRef.current || !pointerHeldRef.current) {
+      if (!mountedRef.current || !pointerHeldRef.current || captureAttempt !== captureAttemptRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
@@ -687,10 +696,12 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       setRecording(true);
       stopTimerRef.current = window.setTimeout(stopRecording, MAX_RECORDING_MS);
     } catch {
+      // A superseded/abandoned permission request must not change a newer capture.
+      if (!mountedRef.current || !pointerHeldRef.current || captureAttempt !== captureAttemptRef.current) return;
       pointerHeldRef.current = false;
       recorderRef.current = null;
       recordingStopPendingRef.current = false;
-      if (mountedRef.current) setRecordingFinalizing(false);
+      setRecordingFinalizing(false);
       releaseTracks();
       setRecording(false);
       setVoiceError("Microphone access was denied. Allow microphone access for this site in your browser settings, then try again.");
