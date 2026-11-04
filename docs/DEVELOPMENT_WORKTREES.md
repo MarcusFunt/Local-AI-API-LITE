@@ -38,7 +38,7 @@ pwsh -NoProfile -File scripts/audit_worktrees.ps1 `
   -ReportPath '<new timestamped report path outside this checkout>'
 ```
 
-The audit reads Git worktrees/refs, queries `origin/main` directly without updating local refs, reads Compose labels/mounts/aliases, and reads Scheduled Task program and working directory. It does not print environment variables or task arguments and has no cleanup, prune, recreate, or process-kill mode. If a non-ancestor ref has changed file blobs, the report includes raw path/mode/blob identities and a patch hash, then says `MANUAL_REVIEW_REQUIRED`; it does not decide semantic equivalence. Critical registry or secret-like untracked-file drift exits nonzero. `-SkipMachineInventory` exists only for the disposable test fixture.
+The audit reads Git worktrees/refs, queries `origin/main` directly without updating local refs, reads Compose labels/mounts/aliases, and reads Scheduled Task program and working directory. It does not print environment variables or task arguments and has no cleanup, prune, recreate, or process-kill mode. If a non-ancestor ref has changed file blobs, the report includes raw path/mode/blob identities and a patch hash, then says `MANUAL_REVIEW_REQUIRED`; it does not decide semantic equivalence. Unknown ancestry, incomplete Docker or Scheduled Task inventory, registry drift, secret-like untracked content, and files that cannot be inspected all exit nonzero. Large or unreadable untracked files are reported as unknown without printing their contents. `-SkipMachineInventory` exists only for the disposable test fixture.
 
 Run the fixture acceptance checks with:
 

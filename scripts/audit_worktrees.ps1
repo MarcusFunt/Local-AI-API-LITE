@@ -84,12 +84,12 @@ function Test-SecretLikeUntrackedFile {
   if (!(Test-Path -LiteralPath $candidate -PathType Leaf)) { return $false }
   try {
     $item = Get-Item -LiteralPath $candidate -ErrorAction Stop
-    if ($item.Length -gt 2MB) { return $false }
+    if ($item.Length -gt 2MB) { return $null }
     $content = [System.IO.File]::ReadAllText($candidate)
     return $content -match '(?im)(OPENAI_API_KEY|HUGGINGFACE_HUB_TOKEN|HF_TOKEN|API[_-]?KEY|ACCESS[_-]?TOKEN|CLIENT[_-]?SECRET|PASSWORD|BEARER)\s*[:=]\s*["'']?(?!<|REDACTED|YOUR_|PLACEHOLDER)[A-Za-z0-9._/-]{16,}' -or
       $content -match '(?i)\b(?:sk-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,})\b'
   } catch {
-    return $false
+    return $null
   }
 }
 
@@ -233,8 +233,14 @@ foreach ($worktree in $worktrees) {
     Add-ReportLine "- $path — branch $($worktree.Branch); HEAD $($worktree.Head); $statusSummary"
     foreach ($row in $statusRows) {
       Add-ReportLine "  - $($row.Code) $($row.Path)"
-      if ($row.Code -eq "??" -and (Test-SecretLikeUntrackedFile $path $row.Path)) {
-        $criticalIssues.Add("SENSITIVE_UNTRACKED: secret-like path or content detected at $($row.Path)")
+      if ($row.Code -eq "??") {
+        $secretScan = Test-SecretLikeUntrackedFile $path $row.Path
+        if ($secretScan -eq $true) {
+          $criticalIssues.Add("SENSITIVE_UNTRACKED: secret-like path or content detected at $($row.Path)")
+        } elseif ($null -eq $secretScan) {
+          Add-ReportLine "  - SECRET_SCAN_UNKNOWN: file could not be safely inspected; content was not printed."
+          $criticalIssues.Add("SECRET_SCAN_UNKNOWN: untracked file could not be safely inspected at $($row.Path)")
+        }
       }
     }
   } catch {
@@ -272,6 +278,7 @@ foreach ($line in ($branchOutput -split "`r?`n")) {
         }
       } else {
         $relation = "ANCESTRY_UNKNOWN"
+        $criticalIssues.Add("ANCESTRY_UNKNOWN: Git could not determine whether $shortName is contained in fresh main")
       }
     }
   }
@@ -317,7 +324,11 @@ if ($SkipMachineInventory) {
     foreach ($id in $containerIds) {
       if ([string]::IsNullOrWhiteSpace([string]$id)) { continue }
       $json = & docker inspect ([string]$id) 2>$null
-      if ($LASTEXITCODE -ne 0) { continue }
+      if ($LASTEXITCODE -ne 0) {
+        Add-ReportLine "- UNKNOWN: Docker could not inspect a discovered container; metadata is incomplete."
+        $criticalIssues.Add("DOCKER_INSPECT_UNKNOWN: discovered container metadata could not be read")
+        continue
+      }
       $container = (($json -join "`n") | ConvertFrom-Json)[0]
       $labels = $container.Config.Labels
       $project = [string]$labels.'com.docker.compose.project'
@@ -355,6 +366,7 @@ if ($SkipMachineInventory) {
     }
   } catch {
     Add-ReportLine "- UNKNOWN: Docker metadata could not be read."
+    $criticalIssues.Add("DOCKER_INVENTORY_UNKNOWN: Docker metadata could not be read")
   }
 }
 Add-ReportLine ""
@@ -386,6 +398,7 @@ if ($SkipMachineInventory) {
     }
   } catch {
     Add-ReportLine "- UNKNOWN: Scheduled Task metadata could not be read."
+    $criticalIssues.Add("SCHEDULED_TASK_INVENTORY_UNKNOWN: Scheduled Task metadata could not be read")
   }
 }
 Add-ReportLine ""
