@@ -68,21 +68,88 @@ function installRecorder() {
       this.onstop?.();
     }
   }
-  const stream = { getTracks: () => [{ stop: vi.fn() }] };
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track] };
   const getUserMedia = vi.fn().mockResolvedValue(stream);
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
   vi.stubGlobal("MediaRecorder", FakeRecorder);
-  return { getUserMedia, stream };
+  return { getUserMedia, stream, track };
 }
 
 function installAudioUrls() {
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:spoken-reply"), revokeObjectURL: vi.fn() });
 }
 
+function setTranscriptScrollMetrics(element: HTMLElement, scrollHeight: number, clientHeight: number, scrollTop: number) {
+  Object.defineProperties(element, {
+    scrollHeight: { configurable: true, value: scrollHeight },
+    clientHeight: { configurable: true, value: clientHeight },
+    scrollTop: { configurable: true, writable: true, value: scrollTop },
+  });
+}
+
 describe("ExamplesPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     ready();
+  });
+
+  it("keeps workspace settings, transcript, and composer in one ordered conversation region", async () => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+
+    const conversation = await screen.findByRole("region", { name: "Chat + Voice conversation" });
+    const settings = within(conversation).getByRole("combobox", { name: "Language" });
+    const transcript = within(conversation).getByRole("log", { name: "Conversation" });
+    const composer = within(conversation).getByRole("region", { name: "Message and voice composer" });
+
+    expect(conversation.contains(settings)).toBe(true);
+    expect(conversation.contains(transcript)).toBe(true);
+    expect(conversation.contains(composer)).toBe(true);
+    expect(settings.compareDocumentPosition(transcript) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(transcript.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("summarizes service readiness and keeps routine workspace actions in the details disclosure", async () => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
+
+    expect(await workspace.findByText("Chat ready · Voice ready")).toBeTruthy();
+    const summary = workspace.getByText("Services and status details", { selector: "summary" });
+    const details = summary.closest("details")!;
+    expect(details.open).toBe(false);
+    expect(details.querySelector(".workspace-operational-actions button")?.textContent).toBe("Stop example");
+    fireEvent.click(summary);
+    expect(within(details).getByRole("button", { name: "Stop example" })).toBeTruthy();
+    expect(within(details).getByRole("button", { name: "Refresh status" })).toBeTruthy();
+  });
+
+  it("keeps response-depth guidance available in a compact disclosure", async () => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByRole("radio", { name: "Balanced" });
+
+    const summary = screen.getByText("About response depth", { selector: "summary" });
+    const help = summary.closest("details")!;
+    expect(help.open).toBe(false);
+    fireEvent.click(summary);
+    expect(within(help).getByText(/default tradeoff between response time and answer depth/i)).toBeTruthy();
+    expect(within(help).getByText(/does not guarantee correctness/i)).toBeTruthy();
+  });
+
+  it("places Send and Hold to talk in one action row and keeps auto-speak with settings", async () => {
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    await screen.findByRole("combobox", { name: "Language" });
+    const settings = screen.getByRole("group", { name: "Conversation settings" });
+    expect(within(settings).getByRole("checkbox", { name: "Speak replies automatically" })).toBeTruthy();
+
+    const dock = screen.getByRole("region", { name: "Message and voice composer" });
+    const send = within(dock).getByRole("button", { name: "Send message" });
+    const holdToTalk = within(dock).getByRole("button", { name: "Hold to talk" });
+    const message = within(dock).getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    const actionRow = send.closest(".composer-action-row");
+    expect(actionRow).toBeTruthy();
+    expect(actionRow?.contains(holdToTalk)).toBe(true);
+    expect(message.rows).toBe(2);
+    expect(message.getAttribute("aria-describedby")).toContain("message-limit");
   });
 
   it.each([
@@ -94,6 +161,9 @@ describe("ExamplesPage", () => {
     const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole("button", { name: prompt }));
     expect(composer.value).toBe(prompt);
+    expect(document.activeElement).toBe(composer);
+    expect(composer.selectionStart).toBe(prompt.length);
+    expect(composer.selectionEnd).toBe(prompt.length);
     expect(apiMocks.sendChatTurn).not.toHaveBeenCalled();
     expect(screen.queryByRole("article", { name: "Your message" })).toBeNull();
     expect((screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false);
@@ -108,6 +178,54 @@ describe("ExamplesPage", () => {
     expect(within(screen.getByRole("article", { name: "Your message" })).getByText("My local question")).toBeTruthy();
     expect(within(screen.getByRole("article", { name: "Assistant reply" })).getByText("A useful reply")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Explain how a local AI model works." })).toBeNull();
+  });
+
+  it("scrolls to new messages when the transcript reader is near the end", async () => {
+    apiMocks.sendChatTurn
+      .mockResolvedValueOnce({ text: "First answer", elapsed_ms: 100, usage: {} })
+      .mockImplementationOnce(() => new Promise(() => {}));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" });
+    fireEvent.change(composer, { target: { value: "First question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("First answer");
+
+    const transcript = screen.getByRole("log", { name: "Conversation" });
+    setTranscriptScrollMetrics(transcript, 700, 300, 350);
+    fireEvent.scroll(transcript);
+    fireEvent.change(composer, { target: { value: "Second question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(transcript.scrollTop).toBe(700));
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  });
+
+  it("preserves an upward reading position and offers Jump to latest for arriving replies", async () => {
+    let resolveSecondReply!: (reply: { text: string; elapsed_ms: number; usage: {} }) => void;
+    apiMocks.sendChatTurn
+      .mockResolvedValueOnce({ text: "First answer", elapsed_ms: 100, usage: {} })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondReply = resolve; }));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const composer = await screen.findByRole("textbox", { name: "Message" });
+    fireEvent.change(composer, { target: { value: "First question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("First answer");
+
+    const transcript = screen.getByRole("log", { name: "Conversation" });
+    setTranscriptScrollMetrics(transcript, 700, 300, 100);
+    fireEvent.scroll(transcript);
+    fireEvent.change(composer, { target: { value: "Second question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(apiMocks.sendChatTurn).toHaveBeenCalledTimes(2));
+    setTranscriptScrollMetrics(transcript, 700, 300, 100);
+    fireEvent.scroll(transcript);
+
+    await act(async () => resolveSecondReply({ text: "Second answer", elapsed_ms: 120, usage: {} }));
+    const jump = await screen.findByRole("button", { name: "Jump to latest" });
+    expect(transcript.scrollTop).toBe(100);
+    fireEvent.click(jump);
+    expect(transcript.scrollTop).toBe(700);
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
   });
 
   it("keeps a long reply intact with its timing and working speech action", async () => {
@@ -145,7 +263,7 @@ describe("ExamplesPage", () => {
     { state: "stopping", label: "Stopping", start: null, startDisabled: false, stop: "Stopping…" },
     { state: "failed", label: "Failed", start: "Retry start", startDisabled: false, stop: "Stop example" },
     { state: "recovery-required", label: "Recovery required", start: null, startDisabled: false, stop: "Stop example" },
-  ] as const)("exposes $state status and relevant lifecycle actions in the workspace header", async ({ state, label, start, startDisabled, stop }) => {
+  ] as const)("exposes $state status, prominent recovery, and operational actions in the workspace", async ({ state, label, start, startDisabled, stop }) => {
     apiMocks.getExamples.mockResolvedValue([makeStatus(state)]);
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const workspace = within(screen.getByRole("region", { name: "Chat + Voice workspace" }));
@@ -156,12 +274,15 @@ describe("ExamplesPage", () => {
     } else {
       expect(workspace.queryByRole("button", { name: /^(Start example|Retry start)$/ })).toBeNull();
     }
+    const details = workspace.getByText("Services and status details", { selector: "summary" }).closest("details")!;
+    expect(details.open).toBe(false);
+    fireEvent.click(within(details).getByText("Services and status details", { selector: "summary" }));
     if (stop) {
-      expect((workspace.getByRole("button", { name: stop }) as HTMLButtonElement).disabled).toBe(state === "stopping");
+      expect((within(details).getByRole("button", { name: stop }) as HTMLButtonElement).disabled).toBe(state === "stopping");
     } else {
-      expect(workspace.queryByRole("button", { name: /^(Stop example|Stopping…)$/ })).toBeNull();
+      expect(within(details).queryByRole("button", { name: /^(Stop example|Stopping…)$/ })).toBeNull();
     }
-    expect((workspace.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((within(details).getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("politely announces workspace lifecycle changes", async () => {
@@ -175,7 +296,9 @@ describe("ExamplesPage", () => {
 
     expect(lifecycleStatus.textContent).toContain("Preparing");
     expect(lifecycleStatus.getAttribute("aria-live")).toBe("polite");
-    fireEvent.click(workspace.getByRole("button", { name: "Refresh status" }));
+    const serviceDetails = workspace.getByText("Services and status details", { selector: "summary" }).closest("details")!;
+    fireEvent.click(within(serviceDetails).getByText("Services and status details", { selector: "summary" }));
+    fireEvent.click(within(serviceDetails).getByRole("button", { name: "Refresh status" }));
     await waitFor(() => expect(lifecycleStatus.textContent).toContain("Ready"));
     expect(await workspace.findByRole("status")).toBe(lifecycleStatus);
   });
@@ -184,26 +307,28 @@ describe("ExamplesPage", () => {
     apiMocks.getExamples.mockResolvedValue([makeStatus("ready", { voice: "stopped" })]);
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const message = await screen.findByRole("textbox", { name: "Message" });
+    expect(screen.getByText("Chat ready · Voice unavailable")).toBeTruthy();
     expect((message as HTMLTextAreaElement).disabled).toBe(false);
-    expect((screen.getByRole("button", { name: "Push to talk" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/Chat is ready while push-to-talk and spoken replies wait for both ddu-stt and ddu-tts/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Hold to talk" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Voice is unavailable; chat remains available.", { selector: ".workspace-voice-guidance" })).toBeTruthy();
     fireEvent.change(message, { target: { value: "Text still works" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("A useful reply")).toBeTruthy();
   });
 
-  it("discloses workspace dependencies and recovery guidance only when service details are expanded", async () => {
+  it("keeps recovery guidance visible and discloses workspace dependencies on demand", async () => {
     apiMocks.getExamples.mockResolvedValue([{ ...makeStatus("recovery-required"), last_error_category: "recovery_required" }]);
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     await screen.findByText("Recovery required");
     const summary = screen.getByText("Services and status details", { selector: "summary" });
     const disclosure = summary.closest("details")!;
     expect(disclosure.open).toBe(false);
+    expect(screen.getByText(/The controller needs to confirm the container state before another start/)).toBeTruthy();
     fireEvent.click(summary);
     expect(disclosure.open).toBe(true);
     expect(within(disclosure).getByText("Chat model")).toBeTruthy();
     expect(within(disclosure).getByText("Speech services")).toBeTruthy();
-    expect(within(disclosure).getByRole("status").textContent).toMatch(/confirm the container state before another start/);
+    expect(within(disclosure).queryByText(/The controller needs to confirm the container state before another start/)).toBeNull();
     fireEvent.click(summary);
     expect(disclosure.open).toBe(false);
   });
@@ -214,18 +339,25 @@ describe("ExamplesPage", () => {
     await screen.findByRole("textbox", { name: "Message" });
 
     const focusableControls = [
+      screen.getByRole("link", { name: "Return to Examples" }),
       screen.getByText("Services and status details", { selector: "summary" }),
       screen.getByRole("combobox", { name: "Language" }),
       screen.getByRole("radio", { name: "Balanced" }),
+      screen.getByText("About response depth", { selector: "summary" }),
+      screen.getByRole("checkbox", { name: "Speak replies automatically" }),
+      screen.getByRole("button", { name: /Explain how a local AI model works/i }),
       screen.getByRole("textbox", { name: "Message" }),
-      screen.getByRole("button", { name: "Stop example" }),
-      screen.getByRole("button", { name: "Push to talk" }),
+      screen.getByRole("button", { name: "Hold to talk" }),
+      screen.getByRole("button", { name: "Send message" }),
     ];
     for (const control of focusableControls) {
       expect((control as HTMLElement).tabIndex).not.toBe(-1);
     }
+    for (let index = 0; index < focusableControls.length - 1; index++) {
+      expect(focusableControls[index].compareDocumentPosition(focusableControls[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
 
-    const pushToTalk = focusableControls.at(-1) as HTMLButtonElement;
+    const pushToTalk = screen.getByRole("button", { name: "Hold to talk" }) as HTMLButtonElement;
     pushToTalk.focus();
     expect(document.activeElement).toBe(pushToTalk);
     fireEvent.keyDown(pushToTalk, { key: "Enter" });
@@ -355,7 +487,7 @@ describe("ExamplesPage", () => {
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     fireEvent.change(await screen.findByRole("combobox", { name: "Language" }), { target: { value: "en" } });
     expect(screen.getByText("Turn-based English voice input")).toBeTruthy();
-    const push = screen.getByRole("button", { name: "Push to talk" });
+    const push = screen.getByRole("button", { name: "Hold to talk" });
     fireEvent.pointerDown(push);
     await screen.findByRole("button", { name: "Release to transcribe" });
     fireEvent.pointerUp(push);
@@ -401,7 +533,7 @@ describe("ExamplesPage", () => {
     getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const language = await screen.findByRole("combobox", { name: "Language" });
-    const push = screen.getByRole("button", { name: "Push to talk" });
+    const push = screen.getByRole("button", { name: "Hold to talk" });
     fireEvent.pointerDown(push);
     fireEvent.change(language, { target: { value: "en" } });
     await act(async () => { allowMicrophone?.(stream); });
@@ -409,7 +541,7 @@ describe("ExamplesPage", () => {
     fireEvent.pointerUp(push);
     await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
     expect(apiMocks.transcribeAudio.mock.calls[0][2]).toBe("da");
-    await screen.findByRole("button", { name: "Push to talk" });
+    await screen.findByRole("button", { name: "Hold to talk" });
     fireEvent.pointerDown(push);
     await screen.findByRole("button", { name: "Release to transcribe" });
     fireEvent.pointerUp(push);
@@ -441,7 +573,7 @@ describe("ExamplesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
     expect(await screen.findByText(/voice is unavailable/i)).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Message" }).hasAttribute("disabled")).toBe(false);
-    expect(screen.getByRole("button", { name: /push to talk/i }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: /hold to talk/i }).hasAttribute("disabled")).toBe(true);
   });
 
   it("uses the selected fixed preset for a multi-turn chat and displays timing", async () => {
@@ -483,8 +615,9 @@ describe("ExamplesPage", () => {
     fireEvent.click(within(depth).getByRole("radio", { name: label }));
     expect((within(depth).getByRole("radio", { name: label }) as HTMLInputElement).checked).toBe(true);
     const dock = screen.getByRole("region", { name: "Message and voice composer" });
-    fireEvent.click(within(dock).getByRole("checkbox", { name: "Speak replies automatically" }));
-    const push = within(dock).getByRole("button", { name: "Push to talk" });
+    const settings = screen.getByRole("group", { name: "Conversation settings" });
+    fireEvent.click(within(settings).getByRole("checkbox", { name: "Speak replies automatically" }));
+    const push = within(dock).getByRole("button", { name: "Hold to talk" });
     fireEvent.pointerDown(push);
     await screen.findByRole("button", { name: "Release to transcribe" });
     fireEvent.pointerUp(push);
@@ -507,7 +640,7 @@ describe("ExamplesPage", () => {
     getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { allowMicrophone = resolve; }));
     apiMocks.transcribeAudio.mockImplementationOnce(() => new Promise((resolve) => { finishTranscription = resolve; }));
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const push = await screen.findByRole("button", { name: "Push to talk" });
+    const push = await screen.findByRole("button", { name: "Hold to talk" });
     vi.useFakeTimers();
     fireEvent.pointerDown(push);
     await act(async () => { vi.advanceTimersByTime(2000); });
@@ -537,12 +670,12 @@ describe("ExamplesPage", () => {
   it.each([" ", "Enter"])("records while holding %j and ends capture on key release", async (key) => {
     installRecorder();
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const push = await screen.findByRole("button", { name: "Push to talk" });
+    const push = await screen.findByRole("button", { name: "Hold to talk" });
     fireEvent.keyDown(push, { key });
     await screen.findByRole("button", { name: "Release to transcribe" });
     expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
     fireEvent.keyUp(push, { key });
-    await screen.findByRole("button", { name: "Push to talk" });
+    await screen.findByRole("button", { name: "Hold to talk" });
     expect(screen.queryByRole("timer")).toBeNull();
     expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
   });
@@ -550,7 +683,7 @@ describe("ExamplesPage", () => {
   it.each(["Escape", "blur", "pointercancel"])("returns recording to idle and discards audio on %s", async (action) => {
     installRecorder();
     render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const push = await screen.findByRole("button", { name: "Push to talk" });
+    const push = await screen.findByRole("button", { name: "Hold to talk" });
     fireEvent.pointerDown(push);
     await screen.findByRole("button", { name: "Release to transcribe" });
     expect(screen.getByRole("timer", { name: "Recording elapsed time 00:00" })).toBeTruthy();
@@ -560,6 +693,95 @@ describe("ExamplesPage", () => {
     expect(screen.queryByRole("timer")).toBeNull();
     expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toMatch(/ready to record/i);
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it.each(["window blur", "tab hidden"])("cancels capture and discards audio when the page is interrupted by %s", async (interruption) => {
+    const track = { stop: vi.fn() };
+    class FakeRecorder {
+      static isTypeSupported() { return true; }
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      mimeType = "audio/webm";
+      state = "inactive";
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["private audio"], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+    });
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+
+    if (interruption === "window blur") {
+      fireEvent(window, new Event("blur"));
+    } else {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      fireEvent(document, new Event("visibilitychange"));
+    }
+
+    await waitFor(() => expect(track.stop).toHaveBeenCalledTimes(1));
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect(screen.getByText(/recording cancelled/i)).toBeTruthy();
+    if (interruption === "tab hidden") Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  it("releases capture without transcribing when the workspace unmounts", async () => {
+    const { track } = installRecorder();
+    const page = render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    page.unmount();
+
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("releases microphone tracks and discards capture when the input device disconnects", async () => {
+    let onEnded: EventListener | undefined;
+    const track = {
+      stop: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: EventListener) => { if (type === "ended") onEnded = listener; }),
+      removeEventListener: vi.fn(),
+    };
+    class FakeRecorder {
+      static isTypeSupported() { return true; }
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      mimeType = "audio/webm";
+      state = "inactive";
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["private audio"], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+    });
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    expect(onEnded).toBeTypeOf("function");
+    await act(async () => { onEnded?.(new Event("ended")); });
+
+    await waitFor(() => expect(track.stop).toHaveBeenCalledTimes(1));
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+    expect(screen.queryByRole("timer")).toBeNull();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/microphone disconnected/i);
   });
 
   it("restores a failed prompt to the composer so retry does not include an unanswered turn", async () => {
@@ -674,7 +896,7 @@ describe("ExamplesPage", () => {
     }));
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const clear = await screen.findByRole("button", { name: "Clear session" }) as HTMLButtonElement;
-    const pushToTalk = screen.getByRole("button", { name: "Push to talk" });
+    const pushToTalk = screen.getByRole("button", { name: "Hold to talk" });
     fireEvent.pointerDown(pushToTalk);
     await screen.findByRole("button", { name: "Release to transcribe" });
     fireEvent.pointerUp(pushToTalk);
@@ -797,7 +1019,7 @@ describe("ExamplesPage", () => {
     const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [] });
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    fireEvent.pointerDown(await screen.findByRole("button", { name: /push to talk/i }));
+    fireEvent.pointerDown(await screen.findByRole("button", { name: /hold to talk/i }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/HTTPS/i);
@@ -814,12 +1036,24 @@ describe("ExamplesPage", () => {
     const getUserMedia = vi.fn().mockRejectedValue(new Error("Permission denied"));
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    const pushToTalk = await screen.findByRole("button", { name: /hold to talk/i });
     fireEvent.pointerDown(pushToTalk);
 
     expect((await screen.findByRole("alert")).textContent?.toLowerCase()).toMatch(/allow microphone access.*browser settings/i);
     expect(screen.getByRole("status", { name: "Voice input status" }).textContent).toBe("Voice needs attention");
     expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("explains when this browser cannot record without requesting microphone access", async () => {
+    const getUserMedia = vi.fn();
+    vi.stubGlobal("MediaRecorder", undefined);
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "Hold to talk" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/browser does not support push-to-talk audio recording/i);
+    expect(getUserMedia).not.toHaveBeenCalled();
     expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
   });
 
@@ -843,7 +1077,7 @@ describe("ExamplesPage", () => {
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "" });
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    const pushToTalk = await screen.findByRole("button", { name: /hold to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
     fireEvent.pointerUp(pushToTalk);
@@ -874,7 +1108,7 @@ describe("ExamplesPage", () => {
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
     const composer = await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
     fireEvent.change(composer, { target: { value: "Typed before speaking" } });
-    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    const pushToTalk = await screen.findByRole("button", { name: /hold to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
     fireEvent.pointerUp(pushToTalk);
@@ -908,7 +1142,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    const pushToTalk = await screen.findByRole("button", { name: /hold to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await waitFor(() => expect(screen.getByRole("button", { name: /release to transcribe/i })).toBeTruthy());
     fireEvent.pointerCancel(pushToTalk);
@@ -940,7 +1174,7 @@ describe("ExamplesPage", () => {
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     apiMocks.transcribeAudio.mockResolvedValue({ text: "Released outside" });
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    const pushToTalk = await screen.findByRole("button", { name: /hold to talk/i });
     fireEvent.pointerDown(pushToTalk);
     await screen.findByRole("button", { name: "Release to transcribe" });
     await act(async () => { await Promise.resolve(); });
@@ -969,7 +1203,7 @@ describe("ExamplesPage", () => {
     });
     vi.stubGlobal("MediaRecorder", FakeRecorder);
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    const pushToTalk = await screen.findByRole("button", { name: /push to talk/i });
+    const pushToTalk = await screen.findByRole("button", { name: /hold to talk/i });
     vi.useFakeTimers();
     await act(async () => {
       fireEvent.pointerDown(pushToTalk);
@@ -982,6 +1216,6 @@ describe("ExamplesPage", () => {
     });
 
     expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1);
-    expect(pushToTalk.getAttribute("aria-label")).toBe("Push to talk");
+    expect(pushToTalk.getAttribute("aria-label")).toBe("Hold to talk");
   });
 });
