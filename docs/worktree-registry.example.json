@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repository": "MarcusFunt/Local-AI-API-LITE",
+  "canonical_root": "<absolute operator-local checkout path>",
+  "canonical_branch": "main",
+  "active_branch": null,
+  "active_integration_owner": null,
+  "worktrees": [],
+  "scheduled_tasks": []
+}

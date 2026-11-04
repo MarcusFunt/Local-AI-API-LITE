@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/local-ai-api-lite/worktree-registry.schema.json",
+  "title": "Local-AI-API-LITE private worktree registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "canonical_root",
+    "canonical_branch",
+    "active_branch",
+    "active_integration_owner",
+    "worktrees",
+    "scheduled_tasks"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "repository": { "const": "MarcusFunt/Local-AI-API-LITE" },
+    "canonical_root": { "type": "string", "minLength": 1 },
+    "canonical_branch": { "type": "string", "minLength": 1 },
+    "active_branch": { "type": ["string", "null"] },
+    "active_integration_owner": { "type": ["string", "null"] },
+    "worktrees": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "branch",
+          "purpose",
+          "status",
+          "docker_dependency",
+          "preserve_non_ancestor_history",
+          "review_ticket"
+        ],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "branch": { "type": "string", "minLength": 1 },
+          "purpose": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "minLength": 1 },
+          "docker_dependency": { "type": "string", "minLength": 1 },
+          "preserve_non_ancestor_history": { "type": "boolean" },
+          "review_ticket": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "scheduled_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "task_path", "executable", "working_directory"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "task_path": { "type": "string" },
+          "executable": { "type": "string", "minLength": 1 },
+          "working_directory": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

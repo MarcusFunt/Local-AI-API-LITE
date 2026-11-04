@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import {
   getExamples,
@@ -103,6 +103,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 }) {
   const [status, setStatus] = useState<ExamplePublicStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [pendingAction, setPendingAction] = useState<"start" | "stop" | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +117,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const [chatElapsedMs, setChatElapsedMs] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [recordingFinalizing, setRecordingFinalizing] = useState(false);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [transcriptReady, setTranscriptReady] = useState(false);
@@ -125,12 +127,22 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playAudioOnLoad, setPlayAudioOnLoad] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const mountedRef = useRef(false);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const transcriptNearEndRef = useRef(true);
+  const previousMessagesRef = useRef<ConversationMessage[]>([]);
+  const focusComposerAfterDraftRef = useRef(false);
   const pointerHeldRef = useRef(false);
+  const captureAttemptRef = useRef(0);
   const cancelStopRef = useRef(false);
+  const recordingStopPendingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const stopRecordingRef = useRef<() => void>(() => undefined);
   const streamRef = useRef<MediaStream | null>(null);
+  const microphoneTrackListenersRef = useRef<Array<{ track: MediaStreamTrack; listener: () => void }>>([]);
   const chunksRef = useRef<Blob[]>([]);
   const stopTimerRef = useRef<number | null>(null);
   const activeChatRef = useRef<ActiveChatRequest | null>(null);
@@ -142,6 +154,26 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const openWorkspaceOnReadyRef = useRef(false);
   const statusRequestIdRef = useRef(0);
 
+  useLayoutEffect(() => {
+    if (!focusComposerAfterDraftRef.current) return;
+    focusComposerAfterDraftRef.current = false;
+    const input = messageInputRef.current;
+    if (!input) return;
+    input.focus();
+    const caret = input.value.length;
+    input.setSelectionRange(caret, caret);
+  }, [draft]);
+
+  useLayoutEffect(() => {
+    if (!workspace) return;
+    const input = messageInputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    if (input.scrollHeight > 0) {
+      input.style.height = `${Math.min(input.scrollHeight, Math.min(180, window.innerHeight * 0.25))}px`;
+    }
+  }, [draft, workspace]);
+
   const setAudio = useCallback((nextUrl: string | null) => {
     if (audioUrlRef.current && audioUrlRef.current !== nextUrl) {
       URL.revokeObjectURL(audioUrlRef.current);
@@ -152,6 +184,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const refresh = useCallback(async (): Promise<ExamplePublicStatus | null> => {
     const requestId = ++statusRequestIdRef.current;
+    setRefreshing(true);
     setStatusError(null);
     try {
       const examples = await getExamples();
@@ -168,10 +201,14 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         setLoading(false);
       }
       return null;
+    } finally {
+      if (mountedRef.current && requestId === statusRequestIdRef.current) setRefreshing(false);
     }
   }, [onSessionExpired]);
 
   const releaseTracks = useCallback(() => {
+    microphoneTrackListenersRef.current.forEach(({ track, listener }) => track.removeEventListener?.("ended", listener));
+    microphoneTrackListenersRef.current = [];
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   }, []);
@@ -206,13 +243,35 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   }, []);
 
   const cancelRecording = useCallback((showNotice = true) => {
+    captureAttemptRef.current += 1;
     pointerHeldRef.current = false;
     clearRecordingTimer();
     cancelStopRef.current = true;
     const recorder = recorderRef.current;
-    recorderRef.current = null;
-    if (recorder && recorder.state !== "inactive") {
-      try { recorder.stop(); } catch { /* A recorder that already stopped has no retained audio. */ }
+    if (recordingStopPendingRef.current) {
+      chunksRef.current = [];
+      releaseTracks();
+      if (mountedRef.current) {
+        setRecording(false);
+        if (showNotice) setVoiceNotice("Recording cancelled; no audio was sent.");
+      }
+      return;
+    }
+    if (recorder) {
+      recordingStopPendingRef.current = true;
+      if (mountedRef.current) setRecordingFinalizing(true);
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          recordingStopPendingRef.current = false;
+          recorderRef.current = null;
+          if (mountedRef.current) setRecordingFinalizing(false);
+          /* A recorder that already stopped has no retained audio. */
+        }
+      }
+    } else if (mountedRef.current) {
+      setRecordingFinalizing(false);
     }
     chunksRef.current = [];
     releaseTracks();
@@ -270,6 +329,31 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   }, [chatStartedAt]);
 
   useEffect(() => {
+    const previousMessages = previousMessagesRef.current;
+    const appended = messages.length > previousMessages.length || (
+      messages.length > 0
+      && messages.length >= previousMessages.length
+      && messages[messages.length - 1]?.id !== previousMessages[previousMessages.length - 1]?.id
+    );
+    previousMessagesRef.current = messages;
+
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    if (messages.length === 0) {
+      transcriptNearEndRef.current = true;
+      setShowJumpToLatest(false);
+      return;
+    }
+    if (!appended) return;
+    if (transcriptNearEndRef.current) {
+      transcript.scrollTop = transcript.scrollHeight;
+      setShowJumpToLatest(false);
+    } else {
+      setShowJumpToLatest(true);
+    }
+  }, [messages]);
+
+  useEffect(() => {
     if (!recording || recordingStartedAt === null) return undefined;
     const timer = window.setInterval(() => setRecordingElapsedMs(Math.max(0, Date.now() - recordingStartedAt)), 1000);
     return () => window.clearInterval(timer);
@@ -284,26 +368,40 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   }, [refresh]);
 
   useEffect(() => {
-    if (!recording) return undefined;
-    const releaseOnWindow = () => stopRecording();
+    // A microphone permission prompt can remain pending before 'recording' becomes
+    // true. Register cancellation handlers for the full component lifetime so an
+    // Escape/blur/pointercancel cannot be lost in that interval or during rerenders.
+    const hasActiveCapture = () => pointerHeldRef.current || recorderRef.current !== null;
+    const releaseOnWindow = () => {
+      if (hasActiveCapture()) stopRecordingRef.current();
+    };
+    const cancelOnInterruption = () => {
+      if (hasActiveCapture()) cancelRecording();
+    };
     const cancelOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") cancelRecording();
+      if (event.key === "Escape") cancelOnInterruption();
+    };
+    const cancelWhenHidden = () => {
+      if (document.visibilityState === "hidden") cancelOnInterruption();
     };
     window.addEventListener("pointerup", releaseOnWindow);
-    const cancelOnWindow = () => cancelRecording();
-    window.addEventListener("pointercancel", cancelOnWindow);
+    window.addEventListener("pointercancel", cancelOnInterruption);
+    window.addEventListener("blur", cancelOnInterruption);
+    document.addEventListener("visibilitychange", cancelWhenHidden);
     window.addEventListener("keydown", cancelOnEscape);
     return () => {
       window.removeEventListener("pointerup", releaseOnWindow);
-      window.removeEventListener("pointercancel", cancelOnWindow);
+      window.removeEventListener("pointercancel", cancelOnInterruption);
+      window.removeEventListener("blur", cancelOnInterruption);
+      document.removeEventListener("visibilitychange", cancelWhenHidden);
       window.removeEventListener("keydown", cancelOnEscape);
     };
-  });
+  }, [cancelRecording]);
 
   const voiceReady = status?.voice_dependency.state === "ready";
   const appReady = status?.state === "ready";
-  const canChat = appReady && !sending && !transcribing && !recording && !pendingAction;
-  const canUseVoice = appReady && voiceReady && !pendingAction && !sending && !transcribing;
+  const canChat = appReady && !sending && !transcribing && !recording && !recordingFinalizing && !pendingAction;
+  const canUseVoice = appReady && voiceReady && !pendingAction && !sending && !transcribing && !recordingFinalizing && !recordingStopPendingRef.current;
 
   const handleError = useCallback((cause: unknown, action: "status" | "start" | "stop" | "chat" | "voice") => {
     const code = apiStatus(cause);
@@ -403,6 +501,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     if (!content || !canChat) return;
     const requestLanguage = language;
     const previousMessages = messages;
+    transcriptNearEndRef.current = true;
+    setShowJumpToLatest(false);
     const history: ExampleChatMessage[] = [
       ...messages.slice(-15).map(({ role, content: messageContent }) => ({ role, content: messageContent })),
       { role: "user", content },
@@ -497,22 +597,46 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     pointerHeldRef.current = false;
     clearRecordingTimer();
     const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
+    if (!recorder) {
+      releaseTracks();
+      if (!recordingStopPendingRef.current && mountedRef.current) setRecordingFinalizing(false);
+      return;
+    }
+    if (recordingStopPendingRef.current) {
+      // A second pointer/key release can arrive before the recorder's stop event.
+      // Keep the control locked until that event finishes this capture.
       releaseTracks();
       return;
     }
+    if (recorder.state === "inactive") {
+      // The recorder reached inactive before its queued stop event was handled.
+      recordingStopPendingRef.current = true;
+      setRecording(false);
+      setRecordingFinalizing(true);
+      releaseTracks();
+      return;
+    }
+    recordingStopPendingRef.current = true;
     setRecording(false);
+    setRecordingFinalizing(true);
     try {
       recorder.stop();
       releaseTracks();
     } catch {
-      cancelRecording(false);
+      recordingStopPendingRef.current = false;
+      recorderRef.current = null;
+      cancelStopRef.current = true;
+      chunksRef.current = [];
+      releaseTracks();
+      setRecordingFinalizing(false);
       setVoiceError("Recording ended unexpectedly. Try again.");
     }
-  }, [cancelRecording, clearRecordingTimer, releaseTracks]);
+  }, [clearRecordingTimer, releaseTracks]);
+  stopRecordingRef.current = stopRecording;
 
   const beginRecording = async () => {
-    if (!canUseVoice || pointerHeldRef.current) return;
+    if (!canUseVoice || pointerHeldRef.current || recordingFinalizing || recordingStopPendingRef.current) return;
+    const captureAttempt = ++captureAttemptRef.current;
     const recordingLanguage = language;
     pointerHeldRef.current = true;
     setVoiceError(null);
@@ -529,7 +653,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!mountedRef.current || !pointerHeldRef.current) {
+      if (!mountedRef.current || !pointerHeldRef.current || captureAttempt !== captureAttemptRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
@@ -537,14 +661,17 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       const mimeType = ["audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       recorderRef.current = recorder;
+      recordingStopPendingRef.current = false;
       chunksRef.current = [];
       cancelStopRef.current = false;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
-        recorderRef.current = null;
+        if (recorderRef.current === recorder) recorderRef.current = null;
+        recordingStopPendingRef.current = false;
         releaseTracks();
+        if (mountedRef.current) setRecordingFinalizing(false);
         const wasCancelled = cancelStopRef.current;
         cancelStopRef.current = false;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
@@ -555,13 +682,26 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         cancelRecording(false);
         setVoiceError("Recording ended unexpectedly. Check microphone access and try again.");
       };
+      for (const track of stream.getTracks()) {
+        const onDeviceEnded = () => {
+          cancelRecording(false);
+          if (mountedRef.current) setVoiceError("Microphone disconnected. Check the device and try again.");
+        };
+        track.addEventListener?.("ended", onDeviceEnded, { once: true });
+        microphoneTrackListenersRef.current.push({ track, listener: onDeviceEnded });
+      }
       recorder.start();
       setRecordingStartedAt(Date.now());
       setRecordingElapsedMs(0);
       setRecording(true);
       stopTimerRef.current = window.setTimeout(stopRecording, MAX_RECORDING_MS);
     } catch {
+      // A superseded/abandoned permission request must not change a newer capture.
+      if (!mountedRef.current || !pointerHeldRef.current || captureAttempt !== captureAttemptRef.current) return;
       pointerHeldRef.current = false;
+      recorderRef.current = null;
+      recordingStopPendingRef.current = false;
+      setRecordingFinalizing(false);
       releaseTracks();
       setRecording(false);
       setVoiceError("Microphone access was denied. Allow microphone access for this site in your browser settings, then try again.");
@@ -619,28 +759,88 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     }
   };
 
+  const selectStarterPrompt = (prompt: string) => {
+    focusComposerAfterDraftRef.current = prompt !== draft;
+    setDraft(prompt);
+    const input = messageInputRef.current;
+    input?.focus();
+    if (prompt === draft) input?.setSelectionRange(prompt.length, prompt.length);
+  };
+
+  const handleTranscriptScroll = () => {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    transcriptNearEndRef.current = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 80;
+    if (transcriptNearEndRef.current) setShowJumpToLatest(false);
+  };
+
+  const jumpToLatest = () => {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    transcript.scrollTop = transcript.scrollHeight;
+    transcriptNearEndRef.current = true;
+    setShowJumpToLatest(false);
+  };
+
+  const recordingStatus = <div className={`recording-state${recording ? " recording-state-active" : ""}`}>
+    {recording && <span className="recording-dot" aria-hidden="true" />}
+    <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : recordingFinalizing ? "Finishing recording…" : transcribing ? "Transcribing speech…" : voiceError ? "Voice needs attention" : voiceReady ? canUseVoice ? "Ready to record" : sending ? "Voice controls paused during chat" : "Speech services ready" : "Voice unavailable"}</span>
+    {recording && <span role="timer" aria-label={`Recording elapsed time ${formatElapsed(recordingElapsedMs)}`} aria-live="off">{formatElapsed(recordingElapsedMs)} / 02:00</span>}
+  </div>;
+
+  const pushToTalkButton = <button
+    className={`secondary-button push-to-talk ${recording ? "push-to-talk-recording" : ""}`}
+    type="button"
+    disabled={!canUseVoice || transcribing}
+    aria-label={recordingFinalizing ? "Finishing recording" : transcribing ? "Transcribing speech" : recording ? "Release to transcribe" : "Hold to talk"}
+    aria-describedby={workspace ? "voice-guidance" : undefined}
+    onPointerDown={(event) => { event.preventDefault(); void beginRecording(); }}
+    onPointerUp={() => stopRecording()}
+    onPointerCancel={() => cancelRecording()}
+    onKeyDown={(event) => {
+      if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+        event.preventDefault();
+        void beginRecording();
+      }
+    }}
+    onKeyUp={(event) => {
+      if (event.key === " " || event.key === "Enter") stopRecording();
+    }}
+    onBlur={() => { if (recording) cancelRecording(); }}
+  ><svg className="microphone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="9" y="3" width="6" height="12" rx="3" />
+      <path d="M6 11a6 6 0 0 0 12 0M12 17v4m-4 0h8" />
+    </svg>{recordingFinalizing ? "Finishing recording…" : transcribing ? "Transcribing…" : recording ? "Release to transcribe" : "Hold to talk"}</button>;
+
   const showStartAction = !workspace || canStart || pendingAction === "start" || status?.state === "stopped" || status?.state === "failed";
   const showStopAction = !workspace || canStop || pendingAction === "stop" || status?.state === "stopping";
 
+  const startAction = showStartAction && <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
+    {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
+  </button>;
+  const stopAction = showStopAction && <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
+    {pendingAction === "stop" || status?.state === "stopping" ? "Stopping…" : "Stop example"}
+  </button>;
+  const refreshAction = <button className="text-button" type="button" disabled={loading || refreshing} onClick={() => void refresh()}>Refresh status</button>;
   const lifecycleActions = <div className="example-actions">
     {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
       onOpenWorkspace();
     }}>Open Chat + Voice</a>}
-    {showStartAction && <button className="primary-button" type="button" disabled={!canStart || loading} onClick={() => void start()}>
-      {pendingAction === "start" ? "Starting…" : status?.state === "failed" ? "Retry start" : "Start example"}
-    </button>}
-    {showStopAction && <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
-      {pendingAction === "stop" || status?.state === "stopping" ? "Stopping…" : "Stop example"}
-    </button>}
-    <button className="text-button" type="button" disabled={loading} onClick={() => void refresh()}>
-      Refresh status
-    </button>
+    {startAction}
+    {stopAction}
+    {refreshAction}
+  </div>;
+  const primaryRecoveryAction = workspace && (status?.state === "stopped" || status?.state === "failed") ? startAction : null;
+  const workspaceOperations = <div className="example-actions workspace-operational-actions">
+    {!primaryRecoveryAction && startAction}
+    {stopAction}
+    {refreshAction}
   </div>;
 
   const serviceDetails = <>
-    <p className="example-summary">{statusSummary}</p>
+    {(!workspace || !status?.last_error_category) && <p className="example-summary">{statusSummary}</p>}
     <div className="example-dependencies">
       <DependencyRow title="Chat model" detail={chatDependencyDetail} state={status?.chat_dependency.state ?? "unknown"} />
       <DependencyRow title="Speech services" detail={voiceDependencyDetail} state={status?.voice_dependency.state ?? "unknown"} />
@@ -652,11 +852,6 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const recoveryGuidance = status?.last_error_category && <p className="example-error" role="status">{FAILURE_COPY[status.last_error_category] ?? "The example needs recovery. Refresh status before retrying."}</p>;
 
   return <div className={`page-content examples-content${workspace ? " example-workspace" : ""}`}>
-    {workspace && <a className="workspace-return" href="/examples" onClick={(event) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      onReturnToCatalog();
-    }}>Return to Examples</a>}
     {!workspace && <section className="intro-panel examples-intro">
       <span className="eyebrow">ONE LOCAL HANDS-ON EXAMPLE</span>
       <h2>Try real tasks with your local model</h2>
@@ -665,30 +860,41 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
     <section className="panel example-card" aria-label={workspace ? "Chat + Voice workspace" : undefined} aria-labelledby={workspace ? undefined : "example-title"}>
       <div className={workspace ? "workspace-header" : undefined}>
+        {workspace && <a className="workspace-return" href="/examples" onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          onReturnToCatalog();
+        }}>Return to Examples</a>}
         <div className="example-card-heading">
           <div><span className="eyebrow">{workspace ? "LOCAL WORKSPACE" : "EXAMPLE 01"}</span>{workspace ? <h1 id="example-title">Chat + Voice</h1> : <h2 id="example-title">Chat + Voice</h2>}</div>
           {status ? <StateBadge state={status.state} announce={workspace} /> : <span className="state-badge state-unknown" role={workspace ? "status" : undefined} aria-live={workspace ? "polite" : undefined}>Loading</span>}
+          {workspace && appReady && <span className="workspace-readiness" aria-label="Service readiness">Chat ready · {voiceReady ? "Voice ready" : "Voice unavailable"}</span>}
         </div>
-        {workspace && lifecycleActions}
+        {workspace && primaryRecoveryAction && <div className="workspace-recovery-action">{primaryRecoveryAction}</div>}
       </div>
       {workspace ? <details className="workspace-service-details">
         <summary>Services and status details</summary>
-        <div className="workspace-service-content">{serviceDetails}{recoveryGuidance}</div>
+        <div className="workspace-service-content">{workspaceOperations}{serviceDetails}</div>
       </details> : serviceDetails}
       {statusError && <p className="example-error" role="alert">{statusError}</p>}
       {error && <p className="example-error" role="alert">{error}</p>}
       {notice && <p className="example-notice" role="status">{notice}</p>}
+      {workspace && recoveryGuidance}
       {!workspace && recoveryGuidance}
       {!workspace && lifecycleActions}
     </section>
 
-    {appReady && <section className="panel chat-panel" aria-labelledby="conversation-title">
+    {appReady && <div
+      className={workspace ? "workspace-conversation" : undefined}
+      role={workspace ? "region" : undefined}
+      aria-label={workspace ? "Chat + Voice conversation" : undefined}
+    ><section className="panel chat-panel" aria-labelledby="conversation-title">
       <div className="chat-panel-heading">
         <div><span className="eyebrow">IN-MEMORY CONVERSATION</span><h2 id="conversation-title">Conversation</h2></div>
         <button className="text-button" type="button" onClick={clearConversation} disabled={messages.length === 0 && !draft && !transcribing && !recording}>Clear session</button>
       </div>
 
-      <div className="chat-settings">
+      <div className="chat-settings" role={workspace ? "group" : undefined} aria-label={workspace ? "Conversation settings" : undefined}>
       <div className="language-control">
         <label htmlFor="example-language">Language</label>
         <select id="example-language" value={language} onChange={(event) => setLanguage(event.currentTarget.value as ExampleLanguage)}>
@@ -698,7 +904,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         <span>Chat, transcription, and spoken replies</span>
       </div>
 
-      <fieldset className="preset-control" role="radiogroup" aria-describedby="preset-description">
+      <fieldset className="preset-control" role="radiogroup">
         <legend>Response depth</legend>
         <div className="preset-options">
           {CHAT_PRESETS.map((choice) => <label className="preset-option" key={choice}>
@@ -706,26 +912,36 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
             <span>{choice[0].toUpperCase() + choice.slice(1)}</span>
           </label>)}
         </div>
-        <p id="preset-description">{PRESET_COPY[preset]}</p>
-        <p className="preset-disclaimer">This setting changes latency and answer depth. It does not guarantee correctness.</p>
+        <details className="preset-help">
+          <summary>About response depth</summary>
+          <p id="preset-description">{PRESET_COPY[preset]} This setting changes latency and answer depth. It does not guarantee correctness.</p>
+        </details>
       </fieldset>
+      {workspace && <label className="speak-replies-toggle"><input type="checkbox" checked={speakReplies} onChange={(event) => setSpeakReplies(event.currentTarget.checked)} disabled={!voiceReady} /> Speak replies automatically</label>}
       </div>
 
-      <div className="conversation-log" aria-live="polite" aria-label="Conversation">
+      <div
+        className="conversation-log"
+        ref={transcriptRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Conversation"
+        onScroll={handleTranscriptScroll}
+      >
         {messages.length === 0
           ? <div className="conversation-empty">
             <h3>Start a conversation</h3>
-            <p>Ask a question or choose a starting point. Edit it in the message field, then send when ready.</p>
+            <p>Choose a prompt or type below. This session clears when you reload.</p>
             <div className="conversation-starters" role="group" aria-label="Starter prompts">
               {STARTER_PROMPTS.map((prompt) => <button
                 className="conversation-starter"
                 type="button"
                 key={prompt}
                 disabled={!canChat}
-                onClick={() => setDraft(prompt)}
+                onClick={() => selectStarterPrompt(prompt)}
               >{prompt}</button>)}
             </div>
-            <p>The conversation disappears when you reload or clear this session.</p>
           </div>
           : messages.map((message) => <article className={`conversation-message conversation-${message.role}`} aria-label={message.role === "user" ? "Your message" : "Assistant reply"} key={message.id}>
             <div className="conversation-message-meta">{message.role === "user" ? "YOU" : "Ddu-narrator"}</div>
@@ -767,65 +983,53 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       </div>}
 
       <section className="composer-dock" aria-label="Message and voice composer">
-      <form className="example-composer" onSubmit={(event) => void submitMessage(event)}>
+      {showJumpToLatest && <button className="transcript-jump" type="button" aria-label="Jump to latest" onClick={jumpToLatest}>Jump to latest</button>}
+      <form className={`example-composer${workspace ? " workspace-composer" : ""}`} onSubmit={(event) => void submitMessage(event)}>
         <label htmlFor="example-message">Message</label>
         {transcriptReady && <p className="transcript-hint" role="status">Transcript ready. Review and edit it here before sending.</p>}
         <textarea
+          ref={messageInputRef}
           id="example-message"
           aria-label="Message"
+          aria-describedby={workspace ? "message-limit" : undefined}
           maxLength={16_000}
-          rows={4}
+          rows={workspace ? 2 : 4}
           value={draft}
           placeholder="Ask a question or describe a real task…"
           onChange={(event) => setDraft(event.currentTarget.value)}
           disabled={!canChat}
         />
-        <div className="composer-footer">
+        {workspace && <span className="workspace-visually-hidden" id="message-limit">Maximum length is 16,000 characters.</span>}
+        {workspace ? <div className="composer-action-row">
+          <div className="voice-action-group">{pushToTalkButton}{recordingStatus}</div>
+          {draft.length >= 14_000 && <span className="composer-character-count" aria-live="off">{draft.length.toLocaleString()} / 16,000</span>}
+          <button className="primary-button" type="submit" disabled={!canChat || !draft.trim()}>
+            {sending ? "Sending…" : "Send message"}
+          </button>
+        </div> : <div className="composer-footer">
           <span>{draft.length.toLocaleString()} / 16,000 characters</span>
-          <div>
-            <button className="primary-button" type="submit" disabled={!canChat || !draft.trim()}>
-              {sending ? "Sending…" : "Send message"}
-            </button>
-          </div>
-        </div>
+          <div><button className="primary-button" type="submit" disabled={!canChat || !draft.trim()}>{sending ? "Sending…" : "Send message"}</button></div>
+        </div>}
       </form>
 
-      <div className="voice-controls">
-        <div className="voice-control-copy"><strong>Turn-based {language === "da" ? "Danish" : "English"} voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
-        <div className={`recording-state${recording ? " recording-state-active" : ""}`}>
-          {recording && <span className="recording-dot" aria-hidden="true" />}
-          <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : transcribing ? "Transcribing speech…" : voiceError ? "Voice needs attention" : voiceReady ? canUseVoice ? "Ready to record" : sending ? "Voice controls paused during chat" : "Speech services ready" : "Voice unavailable"}</span>
-          {recording && <span role="timer" aria-label={`Recording elapsed time ${formatElapsed(recordingElapsedMs)}`} aria-live="off">{formatElapsed(recordingElapsedMs)} / 02:00</span>}
-        </div>
-        <button
-          className={`secondary-button push-to-talk ${recording ? "push-to-talk-recording" : ""}`}
-          type="button"
-          disabled={!canUseVoice || transcribing}
-          aria-label={transcribing ? "Transcribing speech" : recording ? "Release to transcribe" : "Push to talk"}
-          onPointerDown={(event) => { event.preventDefault(); void beginRecording(); }}
-          onPointerUp={() => stopRecording()}
-          onPointerCancel={() => cancelRecording()}
-          onKeyDown={(event) => {
-            if ((event.key === " " || event.key === "Enter") && !event.repeat) {
-              event.preventDefault();
-              void beginRecording();
-            }
-          }}
-          onKeyUp={(event) => {
-            if (event.key === " " || event.key === "Enter") stopRecording();
-          }}
-          onBlur={() => { if (recording) cancelRecording(); }}
-        >{transcribing ? "Transcribing…" : recording ? "Release to transcribe" : "Hold to talk"}</button>
-        <label className="speak-replies-toggle"><input type="checkbox" checked={speakReplies} onChange={(event) => setSpeakReplies(event.currentTarget.checked)} disabled={!voiceReady} /> Speak replies automatically</label>
-      </div>
+      {workspace
+        ? <p id="voice-guidance" className="workspace-voice-guidance">{voiceReady
+          ? `Hold to talk in ${language === "da" ? "Danish" : "English"}; release to add an editable transcript. Up to 120 seconds.`
+          : `${voiceDependencyDetail}.`}</p>
+        : <div className="voice-controls">
+          <div className="voice-control-copy"><strong>Turn-based {language === "da" ? "Danish" : "English"} voice input</strong><span>{voiceDependencyDetail}. Recording stops when you release or after 120 seconds.</span></div>
+          {recordingStatus}
+          {pushToTalkButton}
+          <label className="speak-replies-toggle"><input type="checkbox" checked={speakReplies} onChange={(event) => setSpeakReplies(event.currentTarget.checked)} disabled={!voiceReady} /> Speak replies automatically</label>
+        </div>}
       {voiceError && <p className="example-error" role="alert">
         {voiceError}
         {window.isSecureContext === false && window.location.hostname.endsWith(".ts.net") && <> <a href={`https://${window.location.host}${window.location.pathname}${window.location.search}`}>Open the Tailscale HTTPS page</a></>}
       </p>}
       {voiceNotice && <p className="example-notice" role="status">{voiceNotice}</p>}
       </section>
-    </section>}
+    </section></div>}
 
-    {status?.state === "ready" && !voiceReady && <p className="example-voice-note">Chat is ready while push-to-talk and spoken replies wait for both ddu-stt and ddu-tts.</p>}
+    {!workspace && status?.state === "ready" && !voiceReady && <p className="example-voice-note">Chat is ready while push-to-talk and spoken replies wait for both ddu-stt and ddu-tts.</p>}
   </div>;
 }
