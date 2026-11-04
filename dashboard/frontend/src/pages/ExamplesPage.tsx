@@ -103,6 +103,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 }) {
   const [status, setStatus] = useState<ExamplePublicStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [pendingAction, setPendingAction] = useState<"start" | "stop" | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +117,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const [chatElapsedMs, setChatElapsedMs] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [recordingFinalizing, setRecordingFinalizing] = useState(false);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [transcriptReady, setTranscriptReady] = useState(false);
@@ -135,6 +137,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const focusComposerAfterDraftRef = useRef(false);
   const pointerHeldRef = useRef(false);
   const cancelStopRef = useRef(false);
+  const recordingStopPendingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const stopRecordingRef = useRef<() => void>(() => undefined);
   const streamRef = useRef<MediaStream | null>(null);
@@ -180,6 +183,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const refresh = useCallback(async (): Promise<ExamplePublicStatus | null> => {
     const requestId = ++statusRequestIdRef.current;
+    setRefreshing(true);
     setStatusError(null);
     try {
       const examples = await getExamples();
@@ -196,6 +200,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
         setLoading(false);
       }
       return null;
+    } finally {
+      if (mountedRef.current && requestId === statusRequestIdRef.current) setRefreshing(false);
     }
   }, [onSessionExpired]);
 
@@ -240,9 +246,30 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     clearRecordingTimer();
     cancelStopRef.current = true;
     const recorder = recorderRef.current;
-    recorderRef.current = null;
-    if (recorder && recorder.state !== "inactive") {
-      try { recorder.stop(); } catch { /* A recorder that already stopped has no retained audio. */ }
+    if (recordingStopPendingRef.current) {
+      chunksRef.current = [];
+      releaseTracks();
+      if (mountedRef.current) {
+        setRecording(false);
+        if (showNotice) setVoiceNotice("Recording cancelled; no audio was sent.");
+      }
+      return;
+    }
+    if (recorder) {
+      recordingStopPendingRef.current = true;
+      if (mountedRef.current) setRecordingFinalizing(true);
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          recordingStopPendingRef.current = false;
+          recorderRef.current = null;
+          if (mountedRef.current) setRecordingFinalizing(false);
+          /* A recorder that already stopped has no retained audio. */
+        }
+      }
+    } else if (mountedRef.current) {
+      setRecordingFinalizing(false);
     }
     chunksRef.current = [];
     releaseTracks();
@@ -365,8 +392,8 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const voiceReady = status?.voice_dependency.state === "ready";
   const appReady = status?.state === "ready";
-  const canChat = appReady && !sending && !transcribing && !recording && !pendingAction;
-  const canUseVoice = appReady && voiceReady && !pendingAction && !sending && !transcribing;
+  const canChat = appReady && !sending && !transcribing && !recording && !recordingFinalizing && !pendingAction;
+  const canUseVoice = appReady && voiceReady && !pendingAction && !sending && !transcribing && !recordingFinalizing && !recordingStopPendingRef.current;
 
   const handleError = useCallback((cause: unknown, action: "status" | "start" | "stop" | "chat" | "voice") => {
     const code = apiStatus(cause);
@@ -562,23 +589,45 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     pointerHeldRef.current = false;
     clearRecordingTimer();
     const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
+    if (!recorder) {
+      releaseTracks();
+      if (!recordingStopPendingRef.current && mountedRef.current) setRecordingFinalizing(false);
+      return;
+    }
+    if (recordingStopPendingRef.current) {
+      // A second pointer/key release can arrive before the recorder's stop event.
+      // Keep the control locked until that event finishes this capture.
       releaseTracks();
       return;
     }
+    if (recorder.state === "inactive") {
+      // The recorder reached inactive before its queued stop event was handled.
+      recordingStopPendingRef.current = true;
+      setRecording(false);
+      setRecordingFinalizing(true);
+      releaseTracks();
+      return;
+    }
+    recordingStopPendingRef.current = true;
     setRecording(false);
+    setRecordingFinalizing(true);
     try {
       recorder.stop();
       releaseTracks();
     } catch {
-      cancelRecording(false);
+      recordingStopPendingRef.current = false;
+      recorderRef.current = null;
+      cancelStopRef.current = true;
+      chunksRef.current = [];
+      releaseTracks();
+      setRecordingFinalizing(false);
       setVoiceError("Recording ended unexpectedly. Try again.");
     }
-  }, [cancelRecording, clearRecordingTimer, releaseTracks]);
+  }, [clearRecordingTimer, releaseTracks]);
   stopRecordingRef.current = stopRecording;
 
   const beginRecording = async () => {
-    if (!canUseVoice || pointerHeldRef.current) return;
+    if (!canUseVoice || pointerHeldRef.current || recordingFinalizing || recordingStopPendingRef.current) return;
     const recordingLanguage = language;
     pointerHeldRef.current = true;
     setVoiceError(null);
@@ -603,14 +652,17 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       const mimeType = ["audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       recorderRef.current = recorder;
+      recordingStopPendingRef.current = false;
       chunksRef.current = [];
       cancelStopRef.current = false;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
-        recorderRef.current = null;
+        if (recorderRef.current === recorder) recorderRef.current = null;
+        recordingStopPendingRef.current = false;
         releaseTracks();
+        if (mountedRef.current) setRecordingFinalizing(false);
         const wasCancelled = cancelStopRef.current;
         cancelStopRef.current = false;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
@@ -636,6 +688,9 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
       stopTimerRef.current = window.setTimeout(stopRecording, MAX_RECORDING_MS);
     } catch {
       pointerHeldRef.current = false;
+      recorderRef.current = null;
+      recordingStopPendingRef.current = false;
+      if (mountedRef.current) setRecordingFinalizing(false);
       releaseTracks();
       setRecording(false);
       setVoiceError("Microphone access was denied. Allow microphone access for this site in your browser settings, then try again.");
@@ -718,7 +773,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
 
   const recordingStatus = <div className={`recording-state${recording ? " recording-state-active" : ""}`}>
     {recording && <span className="recording-dot" aria-hidden="true" />}
-    <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : transcribing ? "Transcribing speech…" : voiceError ? "Voice needs attention" : voiceReady ? canUseVoice ? "Ready to record" : sending ? "Voice controls paused during chat" : "Speech services ready" : "Voice unavailable"}</span>
+    <span role="status" aria-label="Voice input status" aria-live="polite">{recording ? "Recording" : recordingFinalizing ? "Finishing recording…" : transcribing ? "Transcribing speech…" : voiceError ? "Voice needs attention" : voiceReady ? canUseVoice ? "Ready to record" : sending ? "Voice controls paused during chat" : "Speech services ready" : "Voice unavailable"}</span>
     {recording && <span role="timer" aria-label={`Recording elapsed time ${formatElapsed(recordingElapsedMs)}`} aria-live="off">{formatElapsed(recordingElapsedMs)} / 02:00</span>}
   </div>;
 
@@ -726,7 +781,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
     className={`secondary-button push-to-talk ${recording ? "push-to-talk-recording" : ""}`}
     type="button"
     disabled={!canUseVoice || transcribing}
-    aria-label={transcribing ? "Transcribing speech" : recording ? "Release to transcribe" : "Hold to talk"}
+    aria-label={recordingFinalizing ? "Finishing recording" : transcribing ? "Transcribing speech" : recording ? "Release to transcribe" : "Hold to talk"}
     aria-describedby={workspace ? "voice-guidance" : undefined}
     onPointerDown={(event) => { event.preventDefault(); void beginRecording(); }}
     onPointerUp={() => stopRecording()}
@@ -744,7 +799,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   ><svg className="microphone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <rect x="9" y="3" width="6" height="12" rx="3" />
       <path d="M6 11a6 6 0 0 0 12 0M12 17v4m-4 0h8" />
-    </svg>{transcribing ? "Transcribing…" : recording ? "Release to transcribe" : "Hold to talk"}</button>;
+    </svg>{recordingFinalizing ? "Finishing recording…" : transcribing ? "Transcribing…" : recording ? "Release to transcribe" : "Hold to talk"}</button>;
 
   const showStartAction = !workspace || canStart || pendingAction === "start" || status?.state === "stopped" || status?.state === "failed";
   const showStopAction = !workspace || canStop || pendingAction === "stop" || status?.state === "stopping";
@@ -755,7 +810,7 @@ export function ExamplesPage({ csrfToken, onSessionExpired, workspace, onOpenWor
   const stopAction = showStopAction && <button className="secondary-button" type="button" disabled={!canStop} onClick={() => void stop()}>
     {pendingAction === "stop" || status?.state === "stopping" ? "Stopping…" : "Stop example"}
   </button>;
-  const refreshAction = <button className="text-button" type="button" disabled={loading} onClick={() => void refresh()}>Refresh status</button>;
+  const refreshAction = <button className="text-button" type="button" disabled={loading || refreshing} onClick={() => void refresh()}>Refresh status</button>;
   const lifecycleActions = <div className="example-actions">
     {!workspace && appReady && <a className="workspace-open primary-button" href="/examples/chat-voice" onClick={(event) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

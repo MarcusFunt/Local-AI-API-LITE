@@ -409,14 +409,16 @@ describe("ExamplesPage", () => {
     expect(onOpenWorkspace).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the newer lifecycle observation when overlapping refreshes complete out of order", async () => {
+  it("keeps the newer lifecycle observation when an older refresh completes late", async () => {
+    apiMocks.getExamples.mockResolvedValueOnce([makeStatus("stopped")]);
     render(<ExamplesPage workspace={false} onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
-    await screen.findByText("Ready");
+    await screen.findByText("Stopped");
     let resolveOldRefresh!: (statuses: ExamplePublicStatus[]) => void;
     apiMocks.getExamples.mockImplementationOnce(() => new Promise((resolve) => { resolveOldRefresh = resolve; }));
     fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    apiMocks.startExample.mockResolvedValue(makeStatus("starting"));
     apiMocks.getExamples.mockResolvedValue([makeStatus("starting")]);
-    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start example" }));
     await screen.findByText("Preparing");
     await act(async () => resolveOldRefresh([makeStatus("stopped")]));
     expect(screen.queryByText("Stopped")).toBeNull();
@@ -1010,6 +1012,23 @@ describe("ExamplesPage", () => {
     resolveStop?.(makeStatus("stopping"));
   });
 
+  it("disables manual refresh while a status request is pending", async () => {
+    let resolveRefresh: ((statuses: ExamplePublicStatus[]) => void) | undefined;
+    apiMocks.getExamples
+      .mockResolvedValueOnce([makeStatus("ready")])
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const refresh = await screen.findByRole("button", { name: "Refresh status" });
+
+    fireEvent.click(refresh);
+    expect(refresh.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(refresh);
+    expect(apiMocks.getExamples).toHaveBeenCalledTimes(2);
+
+    await act(async () => { resolveRefresh?.([makeStatus("ready")]); });
+    await waitFor(() => expect(refresh.hasAttribute("disabled")).toBe(false));
+  });
+
   it("explains that phone microphone recording needs the Tailscale HTTPS page", async () => {
     class FakeRecorder {
       static isTypeSupported() { return true; }
@@ -1183,6 +1202,104 @@ describe("ExamplesPage", () => {
     await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
     expect(track.stop).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Released outside");
+  });
+
+  it("does not start another capture while the previous recorder is waiting for its stop event", async () => {
+    const recorders: Array<{
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      state: string;
+      start: () => void;
+      stop: () => void;
+      mimeType: string;
+    }> = [];
+    const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
+    const getUserMedia = vi.fn()
+      .mockResolvedValueOnce({ getTracks: () => [tracks[0]] })
+      .mockResolvedValueOnce({ getTracks: () => [tracks[1]] });
+    class DelayedRecorder {
+      static isTypeSupported() { return true; }
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      state = "inactive";
+      mimeType = "audio/webm";
+      constructor() { recorders.push(this); }
+      start() { this.state = "recording"; }
+      stop() { this.state = "inactive"; }
+    }
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    vi.stubGlobal("MediaRecorder", DelayedRecorder);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Keep this draft" } });
+
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    fireEvent.pointerUp(pushToTalk);
+    const finishing = await screen.findByRole("button", { name: "Finishing recording" });
+    expect(finishing.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Send message" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.pointerDown(finishing);
+    await act(async () => { await Promise.resolve(); });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(recorders).toHaveLength(1);
+
+    recorders[0].ondataavailable?.({ data: new Blob(["first recording"], { type: "audio/webm" }) });
+    recorders[0].onstop?.();
+    await waitFor(() => expect(apiMocks.transcribeAudio).toHaveBeenCalledTimes(1));
+    expect(await apiMocks.transcribeAudio.mock.calls[0][1].text()).toBe("first recording");
+
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(recorders).toHaveLength(2);
+    expect(tracks[1].stop).not.toHaveBeenCalled();
+    fireEvent.pointerCancel(pushToTalk);
+  });
+
+  it("keeps a cancelled capture locked through duplicate pointer-cancel events until stop completes", async () => {
+    let recorder: {
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      state: string;
+    } | undefined;
+    const track = { stop: vi.fn() };
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [track] });
+    class DelayedRecorder {
+      static isTypeSupported() { return true; }
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      state = "inactive";
+      mimeType = "audio/webm";
+      constructor() { recorder = this; }
+      start() { this.state = "recording"; }
+      stop() { this.state = "inactive"; }
+    }
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    vi.stubGlobal("MediaRecorder", DelayedRecorder);
+    render(<ExamplesPage workspace onOpenWorkspace={vi.fn()} onReturnToCatalog={vi.fn()} csrfToken="csrf-value" onSessionExpired={vi.fn()} />);
+    const pushToTalk = await screen.findByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(pushToTalk);
+    await screen.findByRole("button", { name: "Release to transcribe" });
+
+    fireEvent.pointerCancel(pushToTalk);
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Finishing recording" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.pointerDown(pushToTalk);
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    recorder?.ondataavailable?.({ data: new Blob(["cancelled private audio"], { type: "audio/webm" }) });
+    recorder?.onstop?.();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Hold to talk" }).hasAttribute("disabled")).toBe(false));
+    expect(apiMocks.transcribeAudio).not.toHaveBeenCalled();
+    expect(track.stop).toHaveBeenCalledTimes(1);
   });
 
   it("automatically stops capture at the 120 second limit", async () => {
