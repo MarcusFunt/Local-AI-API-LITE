@@ -1,5 +1,7 @@
 # Dashboard Examples: Chat + Voice
 
+Provider selection status is documented in [CHAT_PROVIDER_SELECTOR.md](CHAT_PROVIDER_SELECTOR.md). Chat + Voice currently uses the local `ddu-narrator` model only.
+
 Chat + Voice is a local, authenticated dashboard example for trying the currently served `ddu-narrator` model. The dashboard launches one small consumer API container; it does not launch model or speech services. Chat remains available when speech is unavailable.
 
 ## Requirements and readiness
