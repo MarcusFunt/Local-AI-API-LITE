@@ -1,0 +1,23 @@
+{
+  "name": "local-ai-api-lite-siwc-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "vendor/devkit/packages/local"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@siwc/local",
+    "start": "node src/cli.mjs",
+    "test": "node --test test/commands.test.mjs test/client.test.mjs test/cli.test.mjs test/dpapi-encryption.test.mjs"
+  },
+  "dependencies": {
+    "@siwc/local": "0.1.0"
+  },
+  "overrides": {
+    "undici": "7.30.2"
+  }
+}

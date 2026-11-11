@@ -1,6 +1,6 @@
 # Chat provider selector status
 
-**Status: cloud provider disabled. M0 preflight recorded: 2026-11-11.** This document records the feasibility gate from the dual-provider implementation plan. The current dashboard remains local-only; it has no ChatGPT sign-in flow, cloud route, selector, or cloud credentials.
+**Status: cloud provider disabled. Host-only M0 POC ready for review; M0 gate not passed (2026-11-11).** This document records the feasibility gate from the dual-provider implementation plan. The current dashboard remains local-only; it has no ChatGPT sign-in flow, cloud route, selector, or cloud credentials.
 
 ## Existing local path
 
@@ -17,23 +17,31 @@ The Examples workspace sends typed chat to the authenticated, CSRF-protected das
 
 - The inspected checkout and fetched `origin/main` both pointed to `ae04ec39163700eaa1952a63cc07ab42f1054db9`.
 - Host Node.js is 24.15.0, above the official local package's declared Node.js `>=22` engine.
-- The official [Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit) contains `packages/local`, but its package manifest marks version `0.1.0` as `private`; `npm view @siwc/local` returned npm `E404`. This means there is no public npm package; the official source is available in the DevKit repository. It has not been pinned or vendored in this checkout.
-- The DevKit [Noncommercial License](https://github.com/openai/sign-in-with-chatgpt-devkit/blob/main/LICENSE) limits use, development/testing, and distribution to a noncommercial purpose. Confirm the project's intended use fits before adopting or vendoring the package; commercial use requires separate written permission.
-- The SDK requires the host application to supply a `CredentialEncryption` implementation. The official [security guide](https://github.com/openai/sign-in-with-chatgpt-devkit/blob/main/docs/security.md) describes the Electron sample's `safeStorage` provider and says other local runtimes must provide their own OS-backed encryption. The sample app is macOS-only; the proposed Windows host has not validated an encryption adapter or loopback callback.
+- The official [Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit) contains `packages/local`, but its package manifest marks version `0.1.0` as `private`; `npm view @siwc/local` returned npm `E404`. The official source is pinned as a git submodule at `0a36fefeb913055c8c7a1a29b63d82b96b2e841a`; the host uses a separate npm workspace and lockfile.
+- The DevKit [Noncommercial License](https://github.com/openai/sign-in-with-chatgpt-devkit/blob/main/LICENSE) limits use, development/testing, and distribution to a noncommercial purpose. This preflight does not establish permission for commercial use. Written permission is required before commercial adoption.
+- The SDK requires the host application to supply a `CredentialEncryption` implementation. The official [security guide](https://github.com/openai/sign-in-with-chatgpt-devkit/blob/main/docs/security.md) describes the Electron sample's `safeStorage` provider and says other local runtimes must provide their own OS-backed encryption. The host POC supplies current-user Windows DPAPI and passed synthetic round-trip/tamper tests.
 - The official [cookbook](https://developers.openai.com/cookbook/articles/sign-in-with-chatgpt) documents `signIn`, `listModels`, and `streamResponse`. The [inference guide](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) requires a model discovered for the active account and treats `response.completed` as the success condition.
+
+## Host-only M0 proof of concept
+
+- A host-only CLI lives in [`integrations/siwc-host/README.md`](../integrations/siwc-host/README.md). It supports `status`, explicitly confirmed `connect`, separately confirmed `models`, and a separately confirmed `smoke`. It is not connected to the dashboard, Docker, or local Qwen path.
+- The host uses the SDK's stable persisted `urn:uuid:` host ID, includes it as `ext_agent_host_id`, and uses the system-browser OAuth flow with a `127.0.0.1` callback, state, nonce, and PKCE. The host stores SDK data in `%LOCALAPPDATA%\Local-AI-API-LITE\siwc`.
+- Mock-SDK tests distinguish disconnected, identity-only, and plan-authorized states; require confirmation before connect, model catalog lookup, or smoke; prevent model lookup and smoke before the direct token-use grant; discover models dynamically; and redact token-like fields and error messages.
+- On Windows, the DPAPI adapter passed synthetic encrypt/decrypt and tamper-rejection checks. The SDK's package suite passed **56 tests with 1 skipped**, including mocked loopback tests that exercise the host-local callback, state validation, PKCE, and OAuth token exchange without opening a browser or contacting an account.
+- The host npm audit reports zero vulnerabilities. The pinned upstream DevKit repository lockfile separately lists `undici@7.29.1`; the host workspace lockfile does not install `undici`. Recheck this finding before adopting or updating the submodule.
+- The current process and 28 detected Edge/Chrome/Firefox processes run under the same Windows user and session. The planned `%LOCALAPPDATA%\Local-AI-API-LITE\siwc` directory does not exist yet; the parent Local AppData ACL is owned by the current user. No authenticated profile files exist to inspect, and a real system-browser/profile callback remains unverified.
 
 ## M0 work still pending
 
-- The SDK has not been pinned or vendored while the project-use terms are unresolved.
-- No host-only proof of concept or mock-SDK smoke test has been written or run.
-- Windows user-session and loopback callback behavior have not been tested.
-- Identity-only and plan-authorized sessions have not been exercised. The UI must distinguish a signed-in identity from an active `chatgpt.tokens.use.direct` grant before inference is available.
-- Token-leak checks have not been performed across process output, files, browser responses, Docker configuration, logs, or errors because no provider bridge exists yet.
-- No SIWC sign-in was started, no plan-usage scope was granted or checked, and no synthetic cloud inference was sent. The plan requires the user to initiate live sign-in.
+- Project use has not been confirmed as compatible with the DevKit's Noncommercial License; commercial use needs written permission.
+- No real SIWC sign-in was started, no actual account identity or `chatgpt.tokens.use.direct` grant was checked, and no real model catalog was returned.
+- No synthetic cloud inference was sent, so there is no real `response.completed` evidence. The plan requires the user to initiate sign-in and separately consent to the synthetic prompt.
+- Token-leak checks cover mock CLI output/errors and SDK authorization URL tests only. Live process output, credential files, browser traffic, Docker configuration, logs, and dashboard responses still require review after an authorized connection exists.
+- The real default-browser process/session and Windows storage ACLs for an authenticated profile have not been validated. The POC CLI is not a supervised IPC service, and no dashboard bridge exists.
 
 ## Gate decision
 
-M0 is not complete, so cloud implementation remains stopped. Before Milestone 1, close the non-live M0 tasks and verify the SDK/license and Windows host behavior. The final M0 gate also requires user-initiated host-local sign-in, a distinguishable plan-usage grant, a synthetic response ending in `response.completed`, and evidence that tokens do not leak. No undocumented ChatGPT web-session route, browser cookie handling, or implicit fallback is used.
+M0 is not complete, so Milestones 1-6 remain stopped. The host-only POC and non-live tests are available for review. Close the license/use question and remaining Windows checks, then the user can initiate host-local sign-in. The gate also requires a distinguishable actual plan-usage grant, a synthetic response ending in `response.completed`, and complete token-leak evidence. No undocumented ChatGPT web-session route, browser cookie handling, or implicit fallback is used.
 
 Until that gate passes:
 

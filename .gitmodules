@@ -1,0 +1,3 @@
+[submodule "siwc-devkit"]
+	path = integrations/siwc-host/vendor/devkit
+	url = https://github.com/openai/sign-in-with-chatgpt-devkit.git
